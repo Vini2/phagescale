@@ -14,6 +14,14 @@ python phagescale.py --image /path/to/image.png --scale_nm 100 --debug
 
 - `--scale_nm` is the numeric value printed for the scale bar (for example `100` for `100 nm`).
 - If auto scale-bar detection fails, pass `--bar_px_override` with a manually measured bar length in pixels.
+- `--overlay_out /path/to/output.png` saves an annotated image with the traced tail.
+- `--show_overlay` displays the annotated image at the end of the run (and also saves it in the current working directory if `--overlay_out` is not provided).
+
+Example with overlay:
+
+```bash
+python phagescale.py --image /path/to/image.png --scale_nm 100 --overlay_out /tmp/annotated.png --show_overlay
+```
 
 ## Regression Checks
 
