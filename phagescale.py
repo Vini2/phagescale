@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
@@ -53,6 +54,18 @@ class Config:
     tail_trace_fail_limit: int = 18
     tail_trace_max_steps: int = 500
     tail_trace_loop_back_steps: int = 16
+
+
+@dataclass
+class TailMeasurement:
+    tail_nm: float
+    tail_px: float
+    bar_px: int
+    px_per_nm: float
+    head_yx: Tuple[int, int]
+    head_r: float
+    theta_deg: float
+    tail_points: list[Tuple[float, float]]
 
 
 def _odd(n: int, minimum: int = 3) -> int:
@@ -449,13 +462,13 @@ def _path_mean_response(resp_norm: np.ndarray, points: list[Tuple[float, float]]
     return float(np.mean(vals)) if vals else 0.0
 
 
-def measure_phage_tail_length_nm(
+def measure_phage_tail(
     image_path: str,
     scale_nm: float = 50.0,
     cfg: Optional[Config] = None,
     bar_px_override: Optional[int] = None,
     debug: bool = False,
-) -> float:
+) -> TailMeasurement:
     cfg = cfg or Config()
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
@@ -580,7 +593,78 @@ def measure_phage_tail_length_nm(
         print(f"[debug] tail_start(y,x)={start}; tail_end(y,x)={end}")
         print(f"[debug] tail_px={tail_px:.2f}px => tail_nm={tail_nm:.2f}nm")
 
-    return float(tail_nm)
+    return TailMeasurement(
+        tail_nm=float(tail_nm),
+        tail_px=float(tail_px),
+        bar_px=int(bar_px),
+        px_per_nm=float(px_per_nm),
+        head_yx=(int(head_yx[0]), int(head_yx[1])),
+        head_r=float(head_r),
+        theta_deg=float(theta_deg),
+        tail_points=list(tail_points),
+    )
+
+
+def measure_phage_tail_length_nm(
+    image_path: str,
+    scale_nm: float = 50.0,
+    cfg: Optional[Config] = None,
+    bar_px_override: Optional[int] = None,
+    debug: bool = False,
+) -> float:
+    result = measure_phage_tail(
+        image_path=image_path,
+        scale_nm=scale_nm,
+        cfg=cfg,
+        bar_px_override=bar_px_override,
+        debug=debug,
+    )
+    return float(result.tail_nm)
+
+
+def render_tail_overlay(image_path: str, result: TailMeasurement) -> np.ndarray:
+    img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise FileNotFoundError(f"Could not read image for overlay: {image_path}")
+
+    h, w = img_bgr.shape[:2]
+    thickness = max(2, int(round(0.004 * min(h, w))))
+    line_pts = np.array(
+        [[int(round(x)), int(round(y))] for y, x in result.tail_points],
+        dtype=np.int32,
+    ).reshape(-1, 1, 2)
+
+    if len(line_pts) >= 2:
+        cv2.polylines(img_bgr, [line_pts], False, (0, 0, 255), thickness, cv2.LINE_AA)
+        sx, sy = int(line_pts[0, 0, 0]), int(line_pts[0, 0, 1])
+        ex, ey = int(line_pts[-1, 0, 0]), int(line_pts[-1, 0, 1])
+        cv2.circle(img_bgr, (sx, sy), thickness + 1, (255, 0, 0), -1, cv2.LINE_AA)
+        cv2.circle(img_bgr, (ex, ey), thickness + 1, (0, 255, 255), -1, cv2.LINE_AA)
+
+    hy, hx = result.head_yx
+    cv2.circle(img_bgr, (hx, hy), int(round(result.head_r)), (255, 255, 0), max(1, thickness - 1), cv2.LINE_AA)
+    cv2.circle(img_bgr, (hx, hy), max(2, thickness), (255, 255, 0), -1, cv2.LINE_AA)
+
+    text1 = f"Tail: {result.tail_nm:.2f} nm"
+    text2 = f"Scale: {result.bar_px}px = {result.bar_px / result.px_per_nm:.0f} nm"
+    cv2.putText(img_bgr, text1, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(img_bgr, text2, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2, cv2.LINE_AA)
+    return img_bgr
+
+
+def _show_overlay_window(img_bgr: np.ndarray, title: str) -> None:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[warn] Could not import matplotlib for display: {exc}")
+        return
+
+    plt.figure(figsize=(7, 7))
+    plt.imshow(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+    plt.title(title)
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
 
 
 def main() -> None:
@@ -589,15 +673,38 @@ def main() -> None:
     ap.add_argument("--scale_nm", type=float, default=50.0, help="Scale bar value in nm (e.g. 100)")
     ap.add_argument("--bar_px_override", type=int, default=None, help="Manual scale bar length in pixels")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument(
+        "--overlay_out",
+        type=str,
+        default=None,
+        help="Path to save image with traced tail overlay (png/jpg).",
+    )
+    ap.add_argument(
+        "--show_overlay",
+        action="store_true",
+        help="Display the traced-tail overlay at the end of the run.",
+    )
     args = ap.parse_args()
 
-    tail_nm = measure_phage_tail_length_nm(
+    result = measure_phage_tail(
         image_path=args.image,
         scale_nm=args.scale_nm,
         bar_px_override=args.bar_px_override,
         debug=args.debug,
     )
-    print(f"Tail length: {tail_nm:.2f} nm")
+    print(f"Tail length: {result.tail_nm:.2f} nm")
+
+    if args.overlay_out is not None or args.show_overlay:
+        out_path = (
+            Path(args.overlay_out)
+            if args.overlay_out is not None
+            else (Path.cwd() / f"{Path(args.image).stem}_tail_overlay.png")
+        )
+        overlay = render_tail_overlay(args.image, result)
+        cv2.imwrite(str(out_path), overlay)
+        print(f"Annotated image: {out_path}")
+        if args.show_overlay:
+            _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
 
 
 if __name__ == "__main__":
