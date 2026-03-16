@@ -1,6 +1,4 @@
-# phagescale
-
-PhageScale: measuring phage tail length from TEM images
+# PhageScale: measuring phage tail length from TEM images
 
 ## Install
 
