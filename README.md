@@ -36,7 +36,7 @@ Options:
   -h, --help     Show this message and exit.
 
 Commands:
-  measure    Measure capsid size and tail lengths from raw TEM images.
+  measure    Measure capsid diameter and tail lengths from raw TEM images.
   annotated  Measure tail lengths from yellow-annotated figures.
 ```
 
@@ -65,7 +65,7 @@ You can disply the help message using `python phagescale.py measure --help`.
 ```bash
 Usage: phagescale.py measure [OPTIONS]
 
-  Measure capsid size and tail lengths from raw TEM images.
+  Measure capsid diameter and tail lengths from raw TEM images.
 
 Options:
   --image FILE               Path to input image (png/jpg/tif).  [required]
