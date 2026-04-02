@@ -57,6 +57,27 @@ You can also save or display an overlay:
 python phagescale.py annotated --image /path/to/figure.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
 ```
 
+Example input image:
+
+![Artemius annotated input](images/annotated/Artemius_siphophage_R.png)
+
+Measure it with:
+
+```bash
+python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100
+```
+
+Example overlay output:
+
+![Artemius overlay output](images/annotated/Artemius_overlay.png)
+
+Save or display the overlay with:
+
+```bash
+python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100 --overlay_out images/annotated/Artemius_overlay.png --show_overlay
+```
+
+
 ## Regression Checks
 
 Run the built-in regression suite for known calibration images:
