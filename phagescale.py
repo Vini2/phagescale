@@ -885,7 +885,7 @@ def _show_overlay_window(img_bgr: np.ndarray, title: str) -> None:
 @click.group(cls=OrderedGroup, context_settings=CLICK_CONTEXT_SETTINGS)
 @click.version_option(VERSION, "-v", "--version", prog_name="phagescale.py")
 def cli() -> None:
-    """Measure phage tail lengths from TEM images."""
+    """Measure phage tail length from TEM images."""
 
 
 @cli.command("measure", context_settings=CLICK_CONTEXT_SETTINGS)
@@ -903,7 +903,7 @@ def measure_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure capsid diameter and tail lengths from raw TEM images."""
+    """Measure capsid diameter and tail length from raw TEM images."""
     try:
         result = measure_phage_tail(
             image_path=str(image),
@@ -936,7 +936,7 @@ def annotated_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure tail lengths from yellow-annotated figures."""
+    """Measure tail length from yellow-annotated figures."""
     try:
         result = measure_annotated_tail(image_path=image, scale_nm=scale_nm)
     except Exception as exc:
