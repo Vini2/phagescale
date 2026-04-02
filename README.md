@@ -1,4 +1,4 @@
-# PhageScale: measuring phage dimensions from TEM images
+# PhageScale: measuring phage dimensions from transmission electron microscopy (TEM) images
 
 PhageScale measures phage dimensions from transmission electron microscopy (TEM) images obtained from [PhageBase](https://www.phagebase.com/).
 
