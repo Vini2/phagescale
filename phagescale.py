@@ -410,7 +410,7 @@ def _path_mean_response(resp_norm: np.ndarray, points: list[Tuple[float, float]]
 
 def measure_phage_tail(
     image_path: str,
-    scale_nm: float = 50.0,
+    scale_nm: float = 100.0,
     cfg: Optional[Config] = None,
     bar_px_override: Optional[int] = None,
     debug: bool = False,
@@ -560,7 +560,7 @@ def measure_phage_tail(
 
 def measure_phage_tail_length_nm(
     image_path: str,
-    scale_nm: float = 50.0,
+    scale_nm: float = 100.0,
     cfg: Optional[Config] = None,
     bar_px_override: Optional[int] = None,
     debug: bool = False,
@@ -890,7 +890,7 @@ def cli() -> None:
 
 @cli.command("measure", context_settings=CLICK_CONTEXT_SETTINGS)
 @click.option("--image", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Path to input image (png/jpg/tif).")
-@click.option("--scale_nm", type=float, default=50.0, show_default=True, help="Scale bar value in nm.")
+@click.option("--scale_nm", type=float, default=100.0, show_default=True, help="Scale bar value in nm.")
 @click.option("--bar_px_override", type=int, default=None, help="Manual scale bar length in pixels.")
 @click.option("--debug", is_flag=True, help="Enable verbose debug output.")
 @click.option("--overlay_out", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Path to save image with tail overlay.")
