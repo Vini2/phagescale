@@ -57,7 +57,9 @@ You can also save or display an overlay:
 python phagescale.py annotated --image /path/to/figure.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
 ```
 
-Example input image:
+**Artemius example**
+
+Input image:
 
 ![Artemius annotated input](images/annotated/Artemius_siphophage_R.png)
 
@@ -67,7 +69,7 @@ Measure it with:
 python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100
 ```
 
-Example overlay output:
+Overlay output:
 
 ![Artemius overlay output](images/annotated/Artemius_overlay.png)
 
