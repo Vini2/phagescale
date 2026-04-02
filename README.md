@@ -1,5 +1,7 @@
 # PhageScale: measuring phage dimensions from TEM images
 
+PhageScale measures phage dimensions from transmission electron microscopy (TEM) images obtained from [PhageBase](https://www.phagebase.com/).
+
 ## Install
 
 ```bash
@@ -102,6 +104,9 @@ Save or display the overlay with:
 python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100 --overlay_out images/annotated/Artemius_overlay.png --show_overlay
 ```
 
+## More Examples
+
+Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure` and `annotated`.
 
 ## Regression Checks
 
