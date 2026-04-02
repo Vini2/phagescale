@@ -186,4 +186,6 @@ Options:
 - `--debug` to print per-image detection diagnostics.
 - `--fail_on_missing` to fail when any regression image is missing.
 
-**Warning**: this is still under construction and heavy testing. Results might be incorrect.
+## Warning
+
+PhageScale is still under active development and heavy testing. Some results might be incorrect. 
