@@ -903,7 +903,7 @@ def measure_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure capsid size and tail lengths from raw TEM images."""
+    """Measure capsid diameter and tail lengths from raw TEM images."""
     try:
         result = measure_phage_tail(
             image_path=str(image),
