@@ -4,6 +4,20 @@ PhageScale measures phage dimensions from transmission electron microscopy (TEM)
 
 ## Install
 
+First, clone this repository.
+
+```bash
+git clone https://github.com/Vini2/phagescale.git
+```
+
+Then, move to the `phagescale` directory.
+
+```bash
+cd phagescale
+```
+
+Now, install the following dependencies. Make sure you have `python` and `pip` installed.
+
 ```bash
 pip install click opencv-python numpy scikit-image matplotlib
 ```
