@@ -29,15 +29,15 @@ You can disply the help message using `python phagescale.py --help`.
 ```bash
 Usage: phagescale.py [OPTIONS] COMMAND [ARGS]...
 
-  Measure phage tail lengths from TEM images.
+  Measure phage tail length from TEM images.
 
 Options:
   -v, --version  Show the version and exit.
   -h, --help     Show this message and exit.
 
 Commands:
-  measure    Measure capsid diameter and tail lengths from raw TEM images.
-  annotated  Measure tail lengths from yellow-annotated figures.
+  measure    Measure capsid diameter and tail length from raw TEM images.
+  annotated  Measure tail length from yellow-annotated figures.
 ```
 
 PhageScale has two subcommands:
@@ -65,7 +65,7 @@ You can disply the help message using `python phagescale.py measure --help`.
 ```bash
 Usage: phagescale.py measure [OPTIONS]
 
-  Measure capsid diameter and tail lengths from raw TEM images.
+  Measure capsid diameter and tail length from raw TEM images.
 
 Options:
   --image FILE               Path to input image (png/jpg/tif).  [required]
@@ -124,7 +124,7 @@ You can disply the help message using `python phagescale.py annotated --help`.
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
 
-  Measure tail lengths from yellow-annotated figures.
+  Measure tail length from yellow-annotated figures.
 
 Options:
   --image FILE        Path to input image (png/jpg/tif).  [required]
