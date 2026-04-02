@@ -69,7 +69,7 @@ Usage: phagescale.py measure [OPTIONS]
 
 Options:
   --image FILE               Path to input image (png/jpg/tif).  [required]
-  --scale_nm FLOAT           Scale bar value in nm.  [default: 50.0]
+  --scale_nm FLOAT           Scale bar value in nm.  [default: 100.0]
   --bar_px_override INTEGER  Manual scale bar length in pixels.
   --debug                    Enable verbose debug output.
   --overlay_out FILE         Path to save image with tail overlay.
