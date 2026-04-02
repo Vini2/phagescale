@@ -26,7 +26,7 @@ Both subcommands support:
 - `--show_overlay` to display the overlay
 - printing the measured tail length to `stdout`
 
-### Measuring from raw images
+### `measure` - Measuring from raw images
 
 ```bash
 python phagescale.py measure --image /path/to/image.png --scale_nm 100 --debug
@@ -66,7 +66,7 @@ python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100
 ```
 
 
-### Measuring from annotated figures
+### `annotated` -Measuring from annotated figures
 
 For figures where the tail has already been marked in yellow:
 
