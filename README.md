@@ -43,6 +43,29 @@ Example with overlay:
 python phagescale.py measure --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
 ```
 
+**MarsHill example**
+
+Input image:
+
+![MarsHill input](images/measure/MarsHill.jpeg)
+
+Measure it with:
+
+```bash
+python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100
+```
+
+Overlay output:
+
+![MarsHill overlay output](images/measure/MarsHill_overlay.png)
+
+Save or display the overlay with:
+
+```bash
+python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100 --overlay_out images/measure/MarsHill_overlay.png --show_overlay
+```
+
+
 ### Measuring from annotated figures
 
 For figures where the tail has already been marked in yellow:
