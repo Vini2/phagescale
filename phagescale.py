@@ -9,15 +9,27 @@ This tuned version uses:
 
 from __future__ import annotations
 
-import argparse
+import heapq
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
+import click
 import cv2
 import numpy as np
 from skimage.measure import label, regionprops
+from skimage.morphology import skeletonize
+
+
+CLICK_CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+VERSION = "0.1.0"
+
+
+class OrderedGroup(click.Group):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        return list(self.commands)
 
 
 @dataclass
@@ -66,6 +78,27 @@ class TailMeasurement:
     head_r: float
     theta_deg: float
     tail_points: list[Tuple[float, float]]
+    scale_bbox_xywh: tuple[int, int, int, int] | None = None
+    scale_polarity: str | None = None
+
+
+@dataclass(frozen=True)
+class AnnotatedScaleBarDetection:
+    length_px: float
+    bbox_xywh: tuple[int, int, int, int]
+    polarity: str
+
+
+@dataclass(frozen=True)
+class AnnotatedTailMeasurement:
+    image_path: Path
+    tail_px: float
+    bar_px: float
+    scale_nm: float
+    tail_nm: float
+    tail_path_yx: list[tuple[int, int]]
+    scale_bbox_xywh: tuple[int, int, int, int]
+    scale_polarity: str
 
 
 def _odd(n: int, minimum: int = 3) -> int:
@@ -87,96 +120,9 @@ def _angle_diff_deg(a: float, b: float) -> float:
 
 
 def _find_scale_bar_px(gray: np.ndarray, cfg: Config, debug: bool = False) -> int:
-    h, w = gray.shape
-    y0 = int(h * (1.0 - cfg.bottom_crop_frac))
-    roi = gray[y0:h, :]
-    roi_h = roi.shape[0]
-
-    min_len = int(w * cfg.bar_min_len_frac)
-    max_len = int(w * cfg.bar_max_len_frac)
-    max_h = max(2, int(roi_h * cfg.bar_max_height_frac))
-
-    # Method 1: threshold dark pixels, keep only horizontal structures near bottom corners.
-    dark_thr = np.percentile(roi, 12)
-    dark_bw = ((roi <= dark_thr).astype(np.uint8) * 255)
-    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, int(w * 0.06)), 1))
-    horiz = cv2.morphologyEx(dark_bw, cv2.MORPH_OPEN, h_kernel)
-    horiz = cv2.dilate(horiz, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1)), iterations=1)
-
-    contours, _ = cv2.findContours(horiz, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates = []
-    for c in contours:
-        x, y, ww, hh = cv2.boundingRect(c)
-        if ww < min_len or ww > max_len:
-            continue
-        if hh <= 0 or hh > max_h:
-            continue
-        aspect = ww / float(hh)
-        if aspect < 6.0:
-            continue
-        if (y + hh) < int(0.45 * roi_h):
-            continue
-        edge_dist = min(x, w - (x + ww))
-        if edge_dist > int(0.35 * w):
-            continue
-
-        score = ww - 0.55 * edge_dist + 0.20 * (y + hh)
-        candidates.append((score, ww, x, y, hh, edge_dist))
-
-    if candidates:
-        candidates.sort(reverse=True, key=lambda t: t[0])
-        _, bar_px, x, y, hh, edge_dist = candidates[0]
-        if debug:
-            print(f"[debug] scale bar (morph): x={x}, y={y}, w={bar_px}, h={hh}, edge={edge_dist} (ROI)")
-        return int(bar_px)
-
-    # Method 2: Hough fallback with bottom + corner gating.
-    kw = _odd(int(w * cfg.blackhat_kernel_w_frac), minimum=21)
-    kh = _odd(int(cfg.blackhat_kernel_h), minimum=5)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
-    bh = cv2.morphologyEx(cv2.equalizeHist(roi), cv2.MORPH_BLACKHAT, kernel)
-    _, bw = cv2.threshold(cv2.GaussianBlur(bh, (5, 5), 0), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    edges = cv2.Canny(bw, 50, 150)
-
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180.0,
-        threshold=cfg.bar_hough_thresh,
-        minLineLength=max(min_len, cfg.bar_hough_min_line_len),
-        maxLineGap=cfg.bar_hough_min_line_gap,
-    )
-
-    best_line = None
-    if lines is not None:
-        for (x1, y1, x2, y2) in lines[:, 0]:
-            dx, dy = x2 - x1, y2 - y1
-            length = math.hypot(dx, dy)
-            if length < min_len or length > max_len:
-                continue
-            if abs(dy) > 3:
-                continue
-            y_mid = 0.5 * (y1 + y2)
-            if y_mid < 0.45 * roi_h:
-                continue
-
-            edge_dist = min(min(x1, x2), w - max(x1, x2))
-            if edge_dist > 0.35 * w:
-                continue
-
-            score = length - 0.55 * edge_dist + 0.20 * y_mid
-            if best_line is None or score > best_line[0]:
-                best_line = (score, length, x1, y1, x2, y2, edge_dist)
-
-    if best_line is not None:
-        _, length, x1, y1, x2, y2, edge_dist = best_line
-        if debug:
-            print(f"[debug] scale bar (hough): ({x1},{y1})-({x2},{y2}) len={length:.1f}px edge={edge_dist:.1f} (ROI)")
-        return int(round(length))
-
-    raise RuntimeError(
-        "Could not find scale bar automatically. Use --bar_px_override or tune bottom_crop_frac/bar_* settings."
-    )
+    del cfg  # Scale bar detection now shares the annotated-image implementation.
+    detection = _find_bottom_scale_bar(gray, debug=debug)
+    return int(round(detection.length_px))
 
 
 def _line_kernel(length: int, angle_deg: float) -> np.ndarray:
@@ -474,7 +420,12 @@ def measure_phage_tail(
     if img is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
 
-    bar_px = int(bar_px_override) if bar_px_override is not None else _find_scale_bar_px(img, cfg, debug=debug)
+    scale_bar_detection = None
+    if bar_px_override is not None:
+        bar_px = int(bar_px_override)
+    else:
+        scale_bar_detection = _find_bottom_scale_bar(img, debug=debug)
+        bar_px = int(round(scale_bar_detection.length_px))
     px_per_nm = bar_px / float(scale_nm)
 
     head_yx, head_r = _detect_head_circle(img, cfg)
@@ -602,6 +553,8 @@ def measure_phage_tail(
         head_r=float(head_r),
         theta_deg=float(theta_deg),
         tail_points=list(tail_points),
+        scale_bbox_xywh=(scale_bar_detection.bbox_xywh if scale_bar_detection is not None else None),
+        scale_polarity=(scale_bar_detection.polarity if scale_bar_detection is not None else None),
     )
 
 
@@ -645,10 +598,272 @@ def render_tail_overlay(image_path: str, result: TailMeasurement) -> np.ndarray:
     cv2.circle(img_bgr, (hx, hy), int(round(result.head_r)), (255, 255, 0), max(1, thickness - 1), cv2.LINE_AA)
     cv2.circle(img_bgr, (hx, hy), max(2, thickness), (255, 255, 0), -1, cv2.LINE_AA)
 
+    if result.scale_bbox_xywh is not None:
+        x, y, ww, hh = result.scale_bbox_xywh
+        cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+
     text1 = f"Tail: {result.tail_nm:.2f} nm"
     text2 = f"Scale: {result.bar_px}px = {result.bar_px / result.px_per_nm:.0f} nm"
     cv2.putText(img_bgr, text1, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(img_bgr, text2, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2, cv2.LINE_AA)
+    return img_bgr
+
+
+def _iter_skeleton_neighbors(y: int, x: int) -> Iterable[tuple[int, int, float]]:
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            weight = math.sqrt(2.0) if dy != 0 and dx != 0 else 1.0
+            yield y + dy, x + dx, weight
+
+
+def _largest_mask_component(mask: np.ndarray) -> np.ndarray:
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    if num_labels <= 1:
+        raise RuntimeError("Could not find a yellow tail annotation.")
+
+    best_label = None
+    best_area = -1
+    for label_idx in range(1, num_labels):
+        area = int(stats[label_idx, cv2.CC_STAT_AREA])
+        if area > best_area:
+            best_label = label_idx
+            best_area = area
+
+    if best_label is None or best_area < 20:
+        raise RuntimeError("Yellow annotation was detected, but it is too small to measure.")
+    return labels == best_label
+
+
+def _detect_yellow_tail_mask(image_bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    yellow = cv2.inRange(hsv, (15, 70, 80), (45, 255, 255)) > 0
+    yellow = cv2.morphologyEx(
+        (yellow.astype(np.uint8) * 255),
+        cv2.MORPH_CLOSE,
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=1,
+    ) > 0
+    yellow = cv2.morphologyEx(
+        (yellow.astype(np.uint8) * 255),
+        cv2.MORPH_OPEN,
+        np.ones((2, 2), dtype=np.uint8),
+        iterations=1,
+    ) > 0
+    return _largest_mask_component(yellow)
+
+
+def _dijkstra_path(start_idx: int, neighbors: list[list[tuple[int, float]]]) -> tuple[list[float], list[int]]:
+    dist = [math.inf] * len(neighbors)
+    parent = [-1] * len(neighbors)
+    dist[start_idx] = 0.0
+    heap: list[tuple[float, int]] = [(0.0, start_idx)]
+
+    while heap:
+        cur_dist, node = heapq.heappop(heap)
+        if cur_dist != dist[node]:
+            continue
+        for nxt, weight in neighbors[node]:
+            cand = cur_dist + weight
+            if cand >= dist[nxt]:
+                continue
+            dist[nxt] = cand
+            parent[nxt] = node
+            heapq.heappush(heap, (cand, nxt))
+
+    return dist, parent
+
+
+def _extract_longest_skeleton_path(mask: np.ndarray) -> tuple[float, list[tuple[int, int]]]:
+    skeleton = skeletonize(mask)
+    points = [tuple(pt) for pt in np.argwhere(skeleton)]
+    if len(points) < 2:
+        raise RuntimeError("Could not skeletonize the yellow annotation into a measurable path.")
+
+    point_to_idx = {point: idx for idx, point in enumerate(points)}
+    neighbors: list[list[tuple[int, float]]] = [[] for _ in points]
+
+    for idx, (y, x) in enumerate(points):
+        seen: set[int] = set()
+        for ny, nx, weight in _iter_skeleton_neighbors(y, x):
+            nxt_idx = point_to_idx.get((ny, nx))
+            if nxt_idx is None or nxt_idx in seen:
+                continue
+            neighbors[idx].append((nxt_idx, weight))
+            seen.add(nxt_idx)
+
+    endpoints = [idx for idx, edges in enumerate(neighbors) if len(edges) == 1]
+    if len(endpoints) < 2:
+        endpoints = list(range(len(points)))
+
+    best_distance = -1.0
+    best_start = -1
+    best_end = -1
+    best_parent: list[int] | None = None
+
+    for start_idx in endpoints:
+        dist, parent = _dijkstra_path(start_idx, neighbors)
+        for end_idx in endpoints:
+            if dist[end_idx] > best_distance and math.isfinite(dist[end_idx]):
+                best_distance = dist[end_idx]
+                best_start = start_idx
+                best_end = end_idx
+                best_parent = parent
+
+    if best_parent is None or best_start < 0 or best_end < 0:
+        raise RuntimeError("Could not find a valid path along the yellow annotation.")
+
+    path: list[tuple[int, int]] = []
+    cur = best_end
+    while cur != -1:
+        path.append(points[cur])
+        if cur == best_start:
+            break
+        cur = best_parent[cur]
+    path.reverse()
+
+    if len(path) < 2 or best_distance <= 0.0:
+        raise RuntimeError("The yellow annotation path is too short to measure.")
+    return best_distance, path
+
+
+def _measure_candidate_span(candidate_mask: np.ndarray) -> int:
+    best_span = 0
+    rows = candidate_mask.shape[0]
+    for row_idx in range(rows):
+        xs = np.flatnonzero(candidate_mask[row_idx])
+        if xs.size == 0:
+            continue
+        best_span = max(best_span, int(xs[-1] - xs[0] + 1))
+
+    if best_span > 0:
+        return best_span
+
+    _, xs = np.where(candidate_mask)
+    if xs.size == 0:
+        return 0
+    return int(xs.max() - xs.min() + 1)
+
+
+def _find_bottom_scale_bar(gray: np.ndarray, debug: bool = False) -> AnnotatedScaleBarDetection:
+    h, w = gray.shape
+    y0 = int(round(h * 0.70))
+    roi = gray[y0:, :]
+
+    min_width = max(18, int(round(w * 0.04)))
+    max_width = int(round(w * 0.45))
+    max_height = max(10, int(round(roi.shape[0] * 0.08)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, int(round(w * 0.05))), 1))
+
+    candidates: list[tuple[float, AnnotatedScaleBarDetection]] = []
+    percentile_specs = [
+        ("bright", roi >= np.percentile(roi, 92)),
+        ("dark", roi <= np.percentile(roi, 10)),
+    ]
+
+    for polarity, mask in percentile_specs:
+        opened = cv2.morphologyEx(mask.astype(np.uint8) * 255, cv2.MORPH_OPEN, kernel)
+        contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            x, y, ww, hh = cv2.boundingRect(contour)
+            if ww < min_width or ww > max_width:
+                continue
+            if hh < 1 or hh > max_height:
+                continue
+            if ww / float(hh) < 6.0:
+                continue
+            if (y + hh) < int(0.25 * roi.shape[0]):
+                continue
+
+            candidate_mask = opened[y:y + hh, x:x + ww] > 0
+            span_px = _measure_candidate_span(candidate_mask)
+            if span_px < min_width:
+                continue
+
+            fill = float(cv2.contourArea(contour) / (ww * hh + 1e-6))
+            score = span_px + 0.30 * (y + hh) + 25.0 * fill - 2.0 * hh
+            detection = AnnotatedScaleBarDetection(
+                length_px=float(span_px),
+                bbox_xywh=(int(x), int(y + y0), int(ww), int(hh)),
+                polarity=polarity,
+            )
+            candidates.append((score, detection))
+
+    if not candidates:
+        raise RuntimeError("Could not find a scale bar in the bottom region of the image.")
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    detection = candidates[0][1]
+    if debug:
+        x, y, ww, hh = detection.bbox_xywh
+        print(
+            "[debug] scale bar (shared): "
+            f"x={x}, y={y}, w={detection.length_px:.1f}, h={hh}, polarity={detection.polarity}"
+        )
+    return detection
+
+
+def measure_annotated_tail(
+    image_path: str | Path,
+    scale_nm: float = 100.0,
+) -> AnnotatedTailMeasurement:
+    image_path = Path(image_path)
+    image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image: {image_path}")
+
+    tail_mask = _detect_yellow_tail_mask(image_bgr)
+    tail_px, tail_path = _extract_longest_skeleton_path(tail_mask)
+
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    scale_bar = _find_bottom_scale_bar(gray)
+    tail_nm = tail_px * float(scale_nm) / scale_bar.length_px
+
+    return AnnotatedTailMeasurement(
+        image_path=image_path,
+        tail_px=float(tail_px),
+        bar_px=float(scale_bar.length_px),
+        scale_nm=float(scale_nm),
+        tail_nm=float(tail_nm),
+        tail_path_yx=tail_path,
+        scale_bbox_xywh=scale_bar.bbox_xywh,
+        scale_polarity=scale_bar.polarity,
+    )
+
+
+def render_annotated_tail_overlay(result: AnnotatedTailMeasurement) -> np.ndarray:
+    img_bgr = cv2.imread(str(result.image_path), cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise FileNotFoundError(f"Could not read image for overlay: {result.image_path}")
+
+    h, w = img_bgr.shape[:2]
+    thickness = max(2, int(round(0.004 * min(h, w))))
+    path_xy = np.array(
+        [[x, y] for y, x in result.tail_path_yx],
+        dtype=np.int32,
+    ).reshape(-1, 1, 2)
+
+    if len(path_xy) >= 2:
+        cv2.polylines(img_bgr, [path_xy], False, (0, 0, 255), thickness, cv2.LINE_AA)
+        sx, sy = path_xy[0, 0]
+        ex, ey = path_xy[-1, 0]
+        cv2.circle(img_bgr, (int(sx), int(sy)), thickness + 1, (255, 0, 0), -1, cv2.LINE_AA)
+        cv2.circle(img_bgr, (int(ex), int(ey)), thickness + 1, (0, 255, 255), -1, cv2.LINE_AA)
+
+    x, y, ww, hh = result.scale_bbox_xywh
+    cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+    cv2.putText(img_bgr, f"Tail: {result.tail_nm:.2f} nm", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(
+        img_bgr,
+        f"Scale bar: {result.bar_px:.1f}px = {result.scale_nm:.0f} nm",
+        (12, 56),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
     return img_bgr
 
 
@@ -667,44 +882,83 @@ def _show_overlay_window(img_bgr: np.ndarray, title: str) -> None:
     plt.show()
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--image", required=True, help="Path to TEM image (png/jpg/tif)")
-    ap.add_argument("--scale_nm", type=float, default=50.0, help="Scale bar value in nm (e.g. 100)")
-    ap.add_argument("--bar_px_override", type=int, default=None, help="Manual scale bar length in pixels")
-    ap.add_argument("--debug", action="store_true")
-    ap.add_argument(
-        "--overlay_out",
-        type=str,
-        default=None,
-        help="Path to save image with traced tail overlay (png/jpg).",
-    )
-    ap.add_argument(
-        "--show_overlay",
-        action="store_true",
-        help="Display the traced-tail overlay at the end of the run.",
-    )
-    args = ap.parse_args()
+@click.group(cls=OrderedGroup, context_settings=CLICK_CONTEXT_SETTINGS)
+@click.version_option(VERSION, "-v", "--version", prog_name="phagescale.py")
+def cli() -> None:
+    """Measure phage tail lengths from TEM images."""
 
-    result = measure_phage_tail(
-        image_path=args.image,
-        scale_nm=args.scale_nm,
-        bar_px_override=args.bar_px_override,
-        debug=args.debug,
-    )
-    print(f"Tail length: {result.tail_nm:.2f} nm")
 
-    if args.overlay_out is not None or args.show_overlay:
-        out_path = (
-            Path(args.overlay_out)
-            if args.overlay_out is not None
-            else (Path.cwd() / f"{Path(args.image).stem}_tail_overlay.png")
+@cli.command("measure", context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--image", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Path to input image (png/jpg/tif).")
+@click.option("--scale_nm", type=float, default=50.0, show_default=True, help="Scale bar value in nm.")
+@click.option("--bar_px_override", type=int, default=None, help="Manual scale bar length in pixels.")
+@click.option("--debug", is_flag=True, help="Enable verbose debug output.")
+@click.option("--overlay_out", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Path to save image with tail overlay.")
+@click.option("--show_overlay", is_flag=True, help="Display the tail overlay at the end of the run.")
+def measure_command(
+    image: Path,
+    scale_nm: float,
+    bar_px_override: Optional[int],
+    debug: bool,
+    overlay_out: Optional[Path],
+    show_overlay: bool,
+) -> None:
+    """Measure capsid size and tail lengths from raw TEM images."""
+    try:
+        result = measure_phage_tail(
+            image_path=str(image),
+            scale_nm=scale_nm,
+            bar_px_override=bar_px_override,
+            debug=debug,
         )
-        overlay = render_tail_overlay(args.image, result)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Tail length: {result.tail_nm:.2f} nm")
+
+    if overlay_out is not None or show_overlay:
+        out_path = overlay_out if overlay_out is not None else (Path.cwd() / f"{image.stem}_tail_overlay.png")
+        overlay = render_tail_overlay(str(image), result)
         cv2.imwrite(str(out_path), overlay)
-        print(f"Annotated image: {out_path}")
-        if args.show_overlay:
+        click.echo(f"Annotated image: {out_path}")
+        if show_overlay:
             _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
+
+
+@cli.command("annotated", context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--image", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Path to input image (png/jpg/tif).")
+@click.option("--scale_nm", type=float, default=100.0, show_default=True, help="Scale bar value in nm.")
+@click.option("--overlay_out", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Path to save image with tail overlay.")
+@click.option("--show_overlay", is_flag=True, help="Display the tail overlay at the end of the run.")
+def annotated_command(
+    image: Path,
+    scale_nm: float,
+    overlay_out: Optional[Path],
+    show_overlay: bool,
+) -> None:
+    """Measure tail lengths from yellow-annotated figures."""
+    try:
+        result = measure_annotated_tail(image_path=image, scale_nm=scale_nm)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Tail length: {result.tail_nm:.2f} nm")
+
+    if overlay_out is not None or show_overlay:
+        out_path = (
+            overlay_out
+            if overlay_out is not None
+            else (Path.cwd() / f"{image.stem}_annotated_tail_overlay.png")
+        )
+        overlay = render_annotated_tail_overlay(result)
+        cv2.imwrite(str(out_path), overlay)
+        click.echo(f"Annotated image: {out_path}")
+        if show_overlay:
+            _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
+
+
+def main() -> None:
+    cli()
 
 
 if __name__ == "__main__":
