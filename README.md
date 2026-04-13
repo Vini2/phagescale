@@ -248,4 +248,4 @@ Options:
 
 ## Warning
 
-PhageScale is still under active development and heavy testing. Some results might be incorrect. Different methods may give different measurements as well.
+PhageScale is still under active development and heavy testing. Some results might be incorrect. Different methods may give different measurements depending on how the capsid and tail are detected from the images.
