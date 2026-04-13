@@ -248,4 +248,4 @@ Options:
 
 ## Warning
 
-PhageScale is still under active development and heavy testing. Some results might be incorrect. 
+PhageScale is still under active development and heavy testing. Some results might be incorrect. Different methods may give different measurements as well.
