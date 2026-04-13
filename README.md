@@ -81,6 +81,8 @@ Options:
   -h, --help                 Show this message and exit.
 ```
 
+This command uses various computer vision techniques, including morphological operations and contour analysis for scale bar detection, Hough circle transform with contrast scoring for capsid identification, and direction-guided centerline tracing using multi-scale filtering (difference-of-Gaussians and morphological operations) for tail measurement.
+
 Example command:
 
 ```bash
