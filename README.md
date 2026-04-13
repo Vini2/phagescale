@@ -38,12 +38,14 @@ Options:
 Commands:
   measure    Measure capsid diameter and tail length from raw TEM images.
   annotated  Measure tail length from yellow-annotated figures.
+  clm        Fit the CLM phage model and measure capsid/tail length.
 ```
 
-PhageScale has two subcommands:
+PhageScale has three subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
 - `annotated` for figures where the tail has already been marked in yellow.
+- `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
 
@@ -168,6 +170,62 @@ Save or display the overlay with:
 ```bash
 python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100 --overlay_out images/annotated/Artemius_overlay.png --show_overlay
 ```
+
+**MarsHill example**
+
+Input image:
+
+![MarsHill input](images/measure/MarsHill.jpeg)
+
+Measure it with:
+
+```bash
+python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100
+```
+
+Overlay output:
+
+![MarsHill overlay output](images/clm/MarsHill_overlay.png)
+
+Save or display the overlay with:
+
+```bash
+python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.png --show_overlay
+```
+
+
+### `clm` - Fit CLM phage model from raw TEM images
+
+You can display the help message using `python phagescale.py clm --help`.
+
+```bash
+Usage: phagescale.py clm [OPTIONS]
+
+  Fit the CLM phage model and measure capsid/tail length.
+
+Options:
+  --image FILE             Path to input image (png/jpg/tif).  [required]
+  --scale_nm FLOAT         Scale bar value in nm.  [default: 100.0]
+  --bar_px_override FLOAT  Manual scale bar length in pixels.
+  --overlay_out FILE       Path to save the fitted overlay image.
+  --show_overlay           Display the fitted overlay at the end of the run.
+  --debug                  Enable verbose debug output.
+  -h, --help               Show this message and exit.
+```
+This command fits a small phage-specific point distribution model to the image and reports both capsid diameter and tail length.
+
+Example command:
+
+```bash
+python phagescale.py clm --image /path/to/image.png --scale_nm 100
+```
+
+Save or display the fitted overlay image with:
+
+```bash
+python phagescale.py clm --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/clm_overlay.png --show_overlay
+```
+
 
 ## More Examples
 
