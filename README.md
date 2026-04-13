@@ -233,18 +233,6 @@ python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --o
 
 Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure` and `annotated`.
 
-## Regression Checks
-
-Run the built-in regression suite for known calibration images:
-
-```bash
-python regression_tail_cases.py
-```
-
-Options:
-- `--root /path/to/Phagebase_Images` to point to a different image directory.
-- `--debug` to print per-image detection diagnostics.
-- `--fail_on_missing` to fail when any regression image is missing.
 
 ## Warning
 
