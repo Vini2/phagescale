@@ -38,7 +38,7 @@ Options:
 Commands:
   measure    Measure capsid diameter and tail length from raw TEM images.
   annotated  Measure tail length from yellow-annotated figures.
-  clm        Fit the CLM phage model and measure capsid/tail length.
+  clm        Measure capsid diameter and tail length with the fitted CLM...
 ```
 
 PhageScale has three subcommands:
@@ -185,12 +185,12 @@ python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100
 
 Overlay output:
 
-![MarsHill overlay output](images/clm/MarsHill_overlay.png)
+![MarsHill overlay output](images/clm/MarsHill_overlay.jpeg)
 
 Save or display the overlay with:
 
 ```bash
-python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.png --show_overlay
+python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.jpeg --show_overlay
 ```
 
 
@@ -201,7 +201,7 @@ You can display the help message using `python phagescale.py clm --help`.
 ```bash
 Usage: phagescale.py clm [OPTIONS]
 
-  Fit the CLM phage model and measure capsid/tail length.
+  Measure capsid diameter and tail length with the fitted CLM phage model.
 
 Options:
   --image FILE             Path to input image (png/jpg/tif).  [required]
