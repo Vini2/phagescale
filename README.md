@@ -58,7 +58,7 @@ Both subcommands support:
 - `--scale_nm` to input scale-bar length in nm
 - `--overlay_out` for an output overlay image path
 - `--show_overlay` to display the overlay
-- printing the measured tail length to `stdout`
+- printing the measured capsid diameter and tail length to `stdout`
 
 ## Commands explained
 
@@ -112,12 +112,12 @@ python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100
 
 Overlay output:
 
-![MarsHill overlay output](images/measure/MarsHill_overlay.png)
+![MarsHill overlay output](images/measure/MarsHill_overlay.jpeg)
 
 Save or display the overlay with:
 
 ```bash
-python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100 --overlay_out images/measure/MarsHill_overlay.png --show_overlay
+python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100 --overlay_out images/measure/MarsHill_overlay.jpeg --show_overlay
 ```
 
 
