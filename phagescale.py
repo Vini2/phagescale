@@ -101,6 +101,10 @@ class AnnotatedTailMeasurement:
     tail_path_yx: list[tuple[int, int]]
     scale_bbox_xywh: tuple[int, int, int, int]
     scale_polarity: str
+    capsid_diameter_px: float
+    capsid_diameter_nm: float
+    capsid_center_xy: tuple[float, float]
+    capsid_radius_px: float
 
 
 def _odd(n: int, minimum: int = 3) -> int:
@@ -656,6 +660,38 @@ def _detect_yellow_tail_mask(image_bgr: np.ndarray) -> np.ndarray:
     return _largest_mask_component(yellow)
 
 
+def _detect_magenta_capsid_mask(image_bgr: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    # Magenta/pink range: hue 140-170 (since OpenCV hue is 0-180, 300-330 deg /2)
+    magenta = cv2.inRange(hsv, (140, 50, 50), (170, 255, 255)) > 0
+    magenta = cv2.morphologyEx(
+        (magenta.astype(np.uint8) * 255),
+        cv2.MORPH_CLOSE,
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=1,
+    ) > 0
+    magenta = cv2.morphologyEx(
+        (magenta.astype(np.uint8) * 255),
+        cv2.MORPH_OPEN,
+        np.ones((2, 2), dtype=np.uint8),
+        iterations=1,
+    ) > 0
+    return _largest_mask_component(magenta)
+
+
+def _compute_capsid_diameter_px(mask: np.ndarray) -> tuple[float, tuple[float, float], float]:
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0.0, (0.0, 0.0), 0.0
+    # Get all points from the largest contour
+    largest_contour = max(contours, key=cv2.contourArea)
+    if len(largest_contour) < 3:
+        return 0.0, (0.0, 0.0), 0.0
+    (x, y), radius = cv2.minEnclosingCircle(largest_contour)
+    diameter = 2 * radius
+    return diameter, (x, y), radius
+
+
 def _dijkstra_path(start_idx: int, neighbors: list[list[tuple[int, float]]]) -> tuple[list[float], list[int]]:
     dist = [math.inf] * len(neighbors)
     parent = [-1] * len(neighbors)
@@ -818,9 +854,13 @@ def measure_annotated_tail(
     tail_mask = _detect_yellow_tail_mask(image_bgr)
     tail_px, tail_path = _extract_longest_skeleton_path(tail_mask)
 
+    capsid_mask = _detect_magenta_capsid_mask(image_bgr)
+    capsid_diameter_px, capsid_center_xy, capsid_radius_px = _compute_capsid_diameter_px(capsid_mask)
+
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     scale_bar = _find_bottom_scale_bar(gray)
     tail_nm = tail_px * float(scale_nm) / scale_bar.length_px
+    capsid_diameter_nm = capsid_diameter_px * float(scale_nm) / scale_bar.length_px
 
     return AnnotatedTailMeasurement(
         image_path=image_path,
@@ -831,6 +871,10 @@ def measure_annotated_tail(
         tail_path_yx=tail_path,
         scale_bbox_xywh=scale_bar.bbox_xywh,
         scale_polarity=scale_bar.polarity,
+        capsid_diameter_px=capsid_diameter_px,
+        capsid_diameter_nm=capsid_diameter_nm,
+        capsid_center_xy=capsid_center_xy,
+        capsid_radius_px=capsid_radius_px,
     )
 
 
@@ -853,13 +897,19 @@ def render_annotated_tail_overlay(result: AnnotatedTailMeasurement) -> np.ndarra
         cv2.circle(img_bgr, (int(sx), int(sy)), thickness + 1, (255, 0, 0), -1, cv2.LINE_AA)
         cv2.circle(img_bgr, (int(ex), int(ey)), thickness + 1, (0, 255, 255), -1, cv2.LINE_AA)
 
+    # Draw capsid circle
+    if result.capsid_radius_px > 0:
+        cx, cy = result.capsid_center_xy
+        cv2.circle(img_bgr, (int(cx), int(cy)), int(result.capsid_radius_px), (255, 255, 0), thickness, cv2.LINE_AA)
+
     x, y, ww, hh = result.scale_bbox_xywh
     cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
-    cv2.putText(img_bgr, f"Tail: {result.tail_nm:.2f} nm", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(img_bgr, f"Capsid: {result.capsid_diameter_nm:.2f} nm", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(img_bgr, f"Tail: {result.tail_nm:.2f} nm", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(
         img_bgr,
         f"Scale bar: {result.bar_px:.1f}px = {result.scale_nm:.0f} nm",
-        (12, 56),
+        (12, 84),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.65,
         (255, 255, 255),
@@ -1617,7 +1667,7 @@ def render_clm_overlay(result: PhageCLMResult) -> np.ndarray:
 @click.group(cls=OrderedGroup, context_settings=CLICK_CONTEXT_SETTINGS)
 @click.version_option(VERSION, "-v", "--version", prog_name="phagescale.py")
 def cli() -> None:
-    """Measure phage tail length from TEM images."""
+    """Measure phage capsid diameter and tail length from TEM images."""
 
 
 @cli.command("measure", context_settings=CLICK_CONTEXT_SETTINGS)
@@ -1635,7 +1685,7 @@ def measure_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure capsid diameter and tail length from raw TEM images."""
+    """Measure from raw TEM images."""
     try:
         result = measure_phage_tail(
             image_path=str(image),
@@ -1668,12 +1718,13 @@ def annotated_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure tail length from yellow-annotated figures."""
+    """Measure from yellow/magenta-annotated figures."""
     try:
         result = measure_annotated_tail(image_path=image, scale_nm=scale_nm)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
+    click.echo(f"Capsid diameter: {result.capsid_diameter_nm:.2f} nm")
     click.echo(f"Tail length: {result.tail_nm:.2f} nm")
 
     if overlay_out is not None or show_overlay:
@@ -1686,7 +1737,7 @@ def annotated_command(
         cv2.imwrite(str(out_path), overlay)
         click.echo(f"Annotated image: {out_path}")
         if show_overlay:
-            _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
+            _show_overlay_window(overlay, f"Capsid: {result.capsid_diameter_nm:.2f} nm, Tail: {result.tail_nm:.2f} nm")
 
 
 @cli.command("clm", context_settings=CLICK_CONTEXT_SETTINGS)
@@ -1704,7 +1755,7 @@ def clm_command(
     show_overlay: bool,
     debug: bool,
 ) -> None:
-    """Measure capsid diameter and tail length with the fitted CLM phage model."""
+    """Measure with the fitted CLM phage model."""
     try:
         result = fit_phage_clm(
             image_path=image,
