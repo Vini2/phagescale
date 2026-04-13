@@ -608,10 +608,12 @@ def render_tail_overlay(image_path: str, result: TailMeasurement) -> np.ndarray:
         x, y, ww, hh = result.scale_bbox_xywh
         cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
 
-    text1 = f"Tail: {result.tail_nm:.2f} nm"
-    text2 = f"Scale: {result.bar_px}px = {result.bar_px / result.px_per_nm:.0f} nm"
+    text1 = f"Capsid: {2 * result.head_r * result.px_per_nm:.2f} nm"
+    text2 = f"Tail: {result.tail_nm:.2f} nm"
+    text3 = f"Scale: {result.bar_px}px = {result.bar_px / result.px_per_nm:.0f} nm"
     cv2.putText(img_bgr, text1, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(img_bgr, text2, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(img_bgr, text2, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(img_bgr, text3, (12, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (255, 255, 255), 2, cv2.LINE_AA)
     return img_bgr
 
 
@@ -1685,7 +1687,7 @@ def measure_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure from raw TEM images."""
+    """Measure capsid diameter and tail length from raw TEM images."""
     try:
         result = measure_phage_tail(
             image_path=str(image),
@@ -1696,6 +1698,7 @@ def measure_command(
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
+    click.echo(f"Capsid diameter: {2 * result.head_r * result.px_per_nm:.2f} nm")
     click.echo(f"Tail length: {result.tail_nm:.2f} nm")
 
     if overlay_out is not None or show_overlay:
@@ -1704,7 +1707,7 @@ def measure_command(
         cv2.imwrite(str(out_path), overlay)
         click.echo(f"Annotated image: {out_path}")
         if show_overlay:
-            _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
+            _show_overlay_window(overlay, f"Capsid: {2 * result.head_r * result.px_per_nm:.2f} nm, Tail: {result.tail_nm:.2f} nm")
 
 
 @cli.command("annotated", context_settings=CLICK_CONTEXT_SETTINGS)
