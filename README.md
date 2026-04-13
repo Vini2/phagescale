@@ -60,7 +60,9 @@ Both subcommands support:
 - `--show_overlay` to display the overlay
 - printing the measured tail length to `stdout`
 
-### `measure` - Measuring from raw images
+## Commands explained
+
+### 1. `measure` - Measuring from raw images
 
 You can disply the help message using `python phagescale.py measure --help`.
 
@@ -119,7 +121,7 @@ python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100
 ```
 
 
-### `annotated` -Measuring from annotated figures
+### 2. `annotated` - Measuring from annotated figures
 
 You can disply the help message using `python phagescale.py annotated --help`.
 
@@ -172,7 +174,7 @@ python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.pn
 ```
 
 
-### `clm` - Fit CLM phage model from raw TEM images
+### 3. `clm` - Fit constrained local model (CLM) fitted phage model from raw TEM images
 
 You can display the help message using `python phagescale.py clm --help`.
 
