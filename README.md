@@ -29,22 +29,22 @@ You can disply the help message using `python phagescale.py --help`.
 ```bash
 Usage: phagescale.py [OPTIONS] COMMAND [ARGS]...
 
-  Measure phage tail length from TEM images.
+  Measure phage capsid diameter and tail length from TEM images.
 
 Options:
   -v, --version  Show the version and exit.
   -h, --help     Show this message and exit.
 
 Commands:
-  measure    Measure capsid diameter and tail length from raw TEM images.
-  annotated  Measure tail length from yellow-annotated figures.
-  clm        Measure capsid diameter and tail length with the fitted CLM...
+  measure    Measure from raw TEM images.
+  annotated  Measure from yellow/magenta-annotated figures.
+  clm        Measure with the fitted CLM phage model.
 ```
 
 PhageScale has three subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
-- `annotated` for figures where the tail has already been marked in yellow.
+- `annotated` for figures where the head and tail has already been marked in magenta and yellow, respectively.
 - `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
@@ -69,7 +69,7 @@ You can disply the help message using `python phagescale.py measure --help`.
 ```bash
 Usage: phagescale.py measure [OPTIONS]
 
-  Measure capsid diameter and tail length from raw TEM images.
+  Measure from raw TEM images.
 
 Options:
   --image FILE               Path to input image (png/jpg/tif).  [required]
@@ -128,7 +128,7 @@ You can disply the help message using `python phagescale.py annotated --help`.
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
 
-  Measure tail length from yellow-annotated figures.
+  Measure from yellow/magenta-annotated figures.
 
 Options:
   --image FILE        Path to input image (png/jpg/tif).  [required]
@@ -137,7 +137,7 @@ Options:
   --show_overlay      Display the tail overlay at the end of the run.
   -h, --help          Show this message and exit.
 ```
-Make sure that your tail has already been marked in **yellow**.
+**NOTE**: Make sure that the capsid in **magenta** and the tail has already been marked in **yellow**.
 
 Example command:
 
@@ -181,7 +181,7 @@ You can display the help message using `python phagescale.py clm --help`.
 ```bash
 Usage: phagescale.py clm [OPTIONS]
 
-  Measure capsid diameter and tail length with the fitted CLM phage model.
+  Measure with the fitted CLM phage model.
 
 Options:
   --image FILE             Path to input image (png/jpg/tif).  [required]
@@ -192,7 +192,7 @@ Options:
   --debug                  Enable verbose debug output.
   -h, --help               Show this message and exit.
 ```
-This command fits a small phage-specific point distribution model to the image and reports both capsid diameter and tail length.
+This command fits a small phage-specific point distribution model to the image and reports both capsid diameter and tail length. The model has been adapted from the [constrained local models fitted by regularized landmark mean-shift for face detection](https://github.com/auduno/clmtrackr).
 
 Example command:
 
