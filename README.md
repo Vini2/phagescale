@@ -140,13 +140,13 @@ Make sure that your tail has already been marked in **yellow**.
 Example command:
 
 ```bash
-python phagescale.py annotated --image /path/to/figure.png --scale_nm 100
+python phagescale.py annotated --image /path/to/image.png --scale_nm 100
 ```
 
 You can also save or display an overlay:
 
 ```bash
-python phagescale.py annotated --image /path/to/figure.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
+python phagescale.py annotated --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
 ```
 
 **Artemius example**
@@ -169,28 +169,6 @@ Save or display the overlay with:
 
 ```bash
 python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100 --overlay_out images/annotated/Artemius_overlay.png --show_overlay
-```
-
-**MarsHill example**
-
-Input image:
-
-![MarsHill input](images/measure/MarsHill.jpeg)
-
-Measure it with:
-
-```bash
-python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100
-```
-
-Overlay output:
-
-![MarsHill overlay output](images/clm/MarsHill_overlay.jpeg)
-
-Save or display the overlay with:
-
-```bash
-python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.jpeg --show_overlay
 ```
 
 
@@ -224,6 +202,28 @@ Save or display the fitted overlay image with:
 
 ```bash
 python phagescale.py clm --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/clm_overlay.png --show_overlay
+```
+
+**MarsHill example**
+
+Input image:
+
+![MarsHill input](images/measure/MarsHill.jpeg)
+
+Measure it with:
+
+```bash
+python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100
+```
+
+Overlay output:
+
+![MarsHill overlay output](images/clm/MarsHill_overlay.jpeg)
+
+Save or display the overlay with:
+
+```bash
+python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.jpeg --show_overlay
 ```
 
 
