@@ -68,6 +68,8 @@ class Config:
     tail_trace_loop_back_steps: int = 16
 
 
+LegacyConfig = Config
+
 @dataclass
 class TailMeasurement:
     tail_nm: float
@@ -882,6 +884,736 @@ def _show_overlay_window(img_bgr: np.ndarray, title: str) -> None:
     plt.show()
 
 
+EPS = 1e-6
+
+
+@dataclass(frozen=True)
+class LandmarkSpec:
+    kind: str
+    value: float
+    weight: float
+    search_radius_px: int
+
+
+@dataclass(frozen=True)
+class FitConfig:
+    capsid_landmarks: int = 16
+    tail_landmarks: int = 14
+    mean_tail_length_units: float = 4.1
+    capsid_radius_scale: float = 0.20
+    tail_length_scale: float = 0.62
+    bend_scale: float = 0.34
+    distal_bend_scale: float = 0.20
+    prior_sigmas: tuple[float, float, float, float] = (0.75, 0.95, 0.85, 0.95)
+    pose_anchor_sigmas: tuple[float, float, float, float] = (20.0, 20.0, 0.40, 14.0)
+    kernel_schedule_px: tuple[float, ...] = (7.0, 4.5, 2.5, 1.2)
+    iterations_per_level: int = 6
+    damping: float = 0.9
+    max_parameter_step_norm: float = 16.0
+
+
+@dataclass(frozen=True)
+class PhageShapeModel:
+    name: str
+    specs: tuple[LandmarkSpec, ...]
+    center_index: int
+    capsid_ring_indices: tuple[int, ...]
+    neck_index: int
+    tail_path_indices: tuple[int, ...]
+    tip_index: int
+
+
+@dataclass(frozen=True)
+class FittedPhageGeometry:
+    capsid_circle_xyr: tuple[float, float, float]
+    tail_polyline_xy: np.ndarray
+
+
+@dataclass
+class PhageCLMResult:
+    image_path: Path
+    scale_nm: float
+    bar_px: float
+    px_per_nm: float
+    capsid_diameter_px: float
+    capsid_diameter_nm: float
+    tail_length_px: float
+    tail_length_nm: float
+    head_center_xy: tuple[float, float]
+    theta_deg: float
+    params: np.ndarray
+    model: PhageShapeModel
+    geometry: FittedPhageGeometry
+    landmark_xy: np.ndarray
+    specs: list[LandmarkSpec]
+    scale_bbox_xywh: tuple[int, int, int, int] | None
+    scale_polarity: str | None
+
+
+def _rotation_matrix(theta_rad: float) -> np.ndarray:
+    c = math.cos(theta_rad)
+    s = math.sin(theta_rad)
+    return np.array([[c, -s], [s, c]], dtype=np.float64)
+
+
+def _build_phage_shape_model(cfg: FitConfig) -> PhageShapeModel:
+    specs: list[LandmarkSpec] = [LandmarkSpec("center", 0.0, 2.8, 10)]
+
+    for angle in np.linspace(0.0, 2.0 * math.pi, cfg.capsid_landmarks, endpoint=False):
+        specs.append(LandmarkSpec("capsid_ring", float(angle), 1.9, 11))
+
+    center_index = 0
+    capsid_ring_indices = tuple(range(1, 1 + cfg.capsid_landmarks))
+
+    specs.append(LandmarkSpec("neck", 0.0, 2.1, 10))
+    neck_index = len(specs) - 1
+
+    for t in np.linspace(0.10, 0.92, cfg.tail_landmarks):
+        specs.append(LandmarkSpec("tail", float(t), 1.3, 12))
+    specs.append(LandmarkSpec("tip", 1.0, 1.7, 14))
+    tip_index = len(specs) - 1
+
+    return PhageShapeModel(
+        name="phage_capsid_tail_rlms",
+        specs=tuple(specs),
+        center_index=center_index,
+        capsid_ring_indices=capsid_ring_indices,
+        neck_index=neck_index,
+        tail_path_indices=tuple([neck_index] + list(range(neck_index + 1, len(specs)))),
+        tip_index=tip_index,
+    )
+
+
+def _shape_in_object_frame(params: np.ndarray, specs: list[LandmarkSpec], cfg: FitConfig) -> np.ndarray:
+    _, _, _, _, q_radius, q_tail, q_bend_mid, q_bend_distal = params
+    radius_units = max(0.55, 1.0 + cfg.capsid_radius_scale * float(q_radius))
+    tail_units = max(1.6, cfg.mean_tail_length_units * (1.0 + cfg.tail_length_scale * float(q_tail)))
+    bend_mid_units = cfg.bend_scale * float(q_bend_mid)
+    bend_distal_units = cfg.distal_bend_scale * float(q_bend_distal)
+
+    points = []
+    for spec in specs:
+        if spec.kind == "center":
+            points.append((0.0, 0.0))
+            continue
+
+        if spec.kind == "capsid_ring":
+            ang = spec.value
+            points.append((radius_units * math.cos(ang), radius_units * math.sin(ang)))
+            continue
+
+        if spec.kind == "neck":
+            points.append((1.03 * radius_units, 0.0))
+            continue
+
+        if spec.kind in {"tail", "tip"}:
+            t = float(spec.value)
+            x = 1.03 * radius_units + tail_units * t
+            support = 4.0 * t * (1.0 - t)
+            asymmetry = support * (2.0 * t - 1.0)
+            y = bend_mid_units * support + bend_distal_units * asymmetry
+            points.append((x, y))
+            continue
+
+        raise ValueError(f"Unknown landmark kind: {spec.kind}")
+
+    return np.asarray(points, dtype=np.float64)
+
+
+def _landmark_positions_xy(params: np.ndarray, specs: list[LandmarkSpec], cfg: FitConfig) -> np.ndarray:
+    tx, ty, theta_rad, scale_px, *_ = params
+    obj = _shape_in_object_frame(params, specs, cfg)
+    world = obj @ _rotation_matrix(theta_rad).T
+    world *= float(scale_px)
+    world[:, 0] += float(tx)
+    world[:, 1] += float(ty)
+    return world
+
+
+def _numerical_jacobian(params: np.ndarray, specs: list[LandmarkSpec], cfg: FitConfig) -> np.ndarray:
+    base = _landmark_positions_xy(params, specs, cfg).reshape(-1)
+    jac = np.zeros((base.size, params.size), dtype=np.float64)
+    eps_values = np.array([1e-2, 1e-2, 2e-4, 2e-3, 2e-3, 2e-3, 2e-3, 2e-3], dtype=np.float64)
+
+    for idx, eps in enumerate(eps_values):
+        step = np.zeros_like(params)
+        step[idx] = eps
+        plus = _landmark_positions_xy(params + step, specs, cfg).reshape(-1)
+        minus = _landmark_positions_xy(params - step, specs, cfg).reshape(-1)
+        jac[:, idx] = (plus - minus) / (2.0 * eps)
+    return jac
+
+
+def _make_capsid_response(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    blur = cv2.GaussianBlur(gray, (0, 0), 1.2)
+    gx = cv2.Scharr(blur, cv2.CV_32F, 1, 0)
+    gy = cv2.Scharr(blur, cv2.CV_32F, 0, 1)
+    grad = cv2.magnitude(gx, gy)
+
+    dark = 255.0 - cv2.GaussianBlur(gray, (0, 0), 2.0).astype(np.float32)
+    blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))).astype(np.float32)
+
+    center_resp = _normalize01(0.75 * dark + 0.25 * blackhat)
+    ring_resp = _normalize01(0.68 * grad + 0.32 * blackhat)
+    return center_resp, ring_resp
+
+
+def _sample_patch(
+    response: np.ndarray,
+    x: float,
+    y: float,
+    search_radius: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    h, w = response.shape
+    cx = int(round(x))
+    cy = int(round(y))
+    x0 = max(0, cx - search_radius)
+    x1 = min(w, cx + search_radius + 1)
+    y0 = max(0, cy - search_radius)
+    y1 = min(h, cy + search_radius + 1)
+
+    patch = response[y0:y1, x0:x1].astype(np.float64)
+    xs = np.arange(x0, x0 + patch.shape[1], dtype=np.float64)
+    ys = np.arange(y0, y0 + patch.shape[0], dtype=np.float64)
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    return patch, grid_x, grid_y
+
+
+def _mean_shift_landmark(
+    response: np.ndarray,
+    current_xy: np.ndarray,
+    sigma_px: float,
+    search_radius: int,
+) -> tuple[np.ndarray, float]:
+    patch, grid_x, grid_y = _sample_patch(response, current_xy[0], current_xy[1], search_radius)
+    if patch.size == 0:
+        return current_xy.copy(), 0.0
+
+    alpha = patch - float(patch.min())
+    if float(alpha.max()) <= EPS:
+        return current_xy.copy(), 0.0
+
+    dx = grid_x - float(current_xy[0])
+    dy = grid_y - float(current_xy[1])
+    kernel = np.exp(-(dx * dx + dy * dy) / (2.0 * sigma_px * sigma_px))
+    weights = alpha * kernel + EPS
+    total = float(weights.sum())
+    if total <= EPS:
+        return current_xy.copy(), 0.0
+
+    new_x = float((weights * grid_x).sum() / total)
+    new_y = float((weights * grid_y).sum() / total)
+    confidence = float(alpha.max())
+    return np.array([new_x, new_y], dtype=np.float64), confidence
+
+
+def _estimate_initial_tail_length_px(
+    tail_response: np.ndarray,
+    head_center_xy: tuple[float, float],
+    head_radius_px: float,
+    theta_rad: float,
+) -> float:
+    h, w = tail_response.shape
+    cx, cy = head_center_xy
+    max_dist = min(w, h) * 0.75
+    distances = np.arange(max(3.0, 1.05 * head_radius_px), max_dist, 1.0, dtype=np.float64)
+    vals = []
+    cos_t = math.cos(theta_rad)
+    sin_t = math.sin(theta_rad)
+
+    for dist in distances:
+        x = cx + dist * cos_t
+        y = cy + dist * sin_t
+        ix = int(round(x))
+        iy = int(round(y))
+        if ix < 2 or ix >= w - 2 or iy < 2 or iy >= h - 2:
+            vals.append(0.0)
+            continue
+        vals.append(float(np.mean(tail_response[iy - 1:iy + 2, ix - 1:ix + 2])))
+
+    if not vals:
+        return 4.0 * head_radius_px
+
+    arr = np.asarray(vals, dtype=np.float64)
+    smooth = cv2.GaussianBlur(arr.reshape(1, -1).astype(np.float32), (1, 0), 1.2).reshape(-1)
+    threshold = max(0.18, 0.48 * float(np.max(smooth)))
+    active = np.where(smooth >= threshold)[0]
+    if active.size == 0:
+        return 4.0 * head_radius_px
+
+    tip_dist = float(distances[int(active[-1])])
+    return max(1.8 * head_radius_px, tip_dist - 1.03 * head_radius_px)
+
+
+def _capsid_contrast_score(gray: np.ndarray, head_yx: tuple[int, int], head_r: float) -> float:
+    y, x = head_yx
+    yy, xx = np.indices(gray.shape)
+    d = np.sqrt((yy - y) ** 2 + (xx - x) ** 2)
+    inner = gray[d <= 0.72 * head_r]
+    ring = gray[(d >= 0.92 * head_r) & (d <= 1.25 * head_r)]
+    outer = gray[(d >= 1.45 * head_r) & (d <= 1.90 * head_r)]
+    if inner.size < 30 or ring.size < 30 or outer.size < 30:
+        return -999.0
+    return float(np.mean(inner) - np.mean(ring) + 0.55 * (np.mean(outer) - np.mean(ring)))
+
+
+def _initial_params(
+    gray: np.ndarray,
+    specs: list[LandmarkSpec],
+    cfg: FitConfig,
+    image_path: Optional[Path] = None,
+    bar_px_override: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    del specs
+    legacy_cfg = LegacyConfig()
+    h, w = gray.shape
+
+    if image_path is not None:
+        try:
+            legacy_result = measure_phage_tail(
+                image_path=str(image_path),
+                scale_nm=100.0,
+                bar_px_override=(int(round(bar_px_override)) if bar_px_override is not None else None),
+                debug=False,
+            )
+            _, tail_resp = _build_tail_response(gray, float(legacy_result.head_r), legacy_cfg)
+            q_tail0 = np.clip(
+                (legacy_result.tail_px / max(legacy_result.head_r, EPS) / cfg.mean_tail_length_units) - 1.0,
+                -1.25,
+                1.5,
+            ) / max(cfg.tail_length_scale, EPS)
+            params0 = np.array(
+                [
+                    float(legacy_result.head_yx[1]),
+                    float(legacy_result.head_yx[0]),
+                    math.radians(float(legacy_result.theta_deg)),
+                    float(legacy_result.head_r),
+                    0.0,
+                    q_tail0,
+                    0.0,
+                    0.0,
+                ],
+                dtype=np.float64,
+            )
+            return params0, tail_resp
+        except Exception:
+            pass
+
+    candidates: list[tuple[tuple[int, int], float]] = []
+    try:
+        candidates.append(_detect_head_circle(gray, legacy_cfg))
+    except RuntimeError:
+        pass
+    try:
+        candidates.append(_estimate_head_from_dark_region(gray))
+    except RuntimeError:
+        pass
+
+    if not candidates:
+        raise RuntimeError("Could not initialize the phage head.")
+
+    best = None
+    for head_yx, head_r in candidates:
+        dog_resp, tail_resp = _build_tail_response(gray, float(head_r), legacy_cfg)
+        head_center_xy = (float(head_yx[1]), float(head_yx[0]))
+        theta_seed_deg = _estimate_tail_direction_deg(dog_resp, head_yx, float(head_r), legacy_cfg)
+
+        theta_options = [float(theta_seed_deg), float((theta_seed_deg + 180.0) % 360.0)]
+        best_theta_rad = 0.0
+        tail_px0 = -1.0
+        for theta_deg in theta_options:
+            theta_rad = math.radians(theta_deg)
+            tail_px = _estimate_initial_tail_length_px(tail_resp, head_center_xy, float(head_r), theta_rad)
+            if tail_px > tail_px0:
+                tail_px0 = tail_px
+                best_theta_rad = theta_rad
+
+        center_penalty = 0.0
+        if head_yx[0] < 0.12 * h or head_yx[0] > 0.82 * h:
+            center_penalty += 40.0
+        if head_yx[1] < 0.12 * w or head_yx[1] > 0.88 * w:
+            center_penalty += 25.0
+
+        score = float(
+            tail_px0
+            + 0.20 * head_r
+            + 3.0 * _capsid_contrast_score(gray, head_yx, float(head_r))
+            - center_penalty
+        )
+        if best is None or score > best[0]:
+            best = (score, head_yx, head_r, best_theta_rad, tail_px0, tail_resp)
+
+    assert best is not None
+    _, head_yx, head_r, theta_rad, tail_px0, tail_resp = best
+    head_center_xy = (float(head_yx[1]), float(head_yx[0]))
+    q_tail0 = np.clip((tail_px0 / max(head_r, EPS) / cfg.mean_tail_length_units) - 1.0, -1.25, 1.5) / max(cfg.tail_length_scale, EPS)
+
+    params0 = np.array(
+        [
+            head_center_xy[0],
+            head_center_xy[1],
+            theta_rad,
+            float(head_r),
+            0.0,
+            q_tail0,
+            0.0,
+            0.0,
+        ],
+        dtype=np.float64,
+    )
+    return params0, tail_resp
+
+
+def _fit_clm(
+    gray: np.ndarray,
+    specs: list[LandmarkSpec],
+    cfg: FitConfig,
+    image_path: Optional[Path] = None,
+    bar_px_override: Optional[float] = None,
+    debug: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    center_resp, ring_resp = _make_capsid_response(gray)
+    params, tail_resp = _initial_params(gray, specs, cfg, image_path=image_path, bar_px_override=bar_px_override)
+    params_anchor = params.copy()
+
+    prior_inv_vars = np.array([0.0, 0.0, 0.0, 0.0] + [1.0 / (sigma * sigma) for sigma in cfg.prior_sigmas], dtype=np.float64)
+    pose_anchor_inv_vars = np.array(
+        [
+            1.0 / (cfg.pose_anchor_sigmas[0] * cfg.pose_anchor_sigmas[0]),
+            1.0 / (cfg.pose_anchor_sigmas[1] * cfg.pose_anchor_sigmas[1]),
+            1.0 / (cfg.pose_anchor_sigmas[2] * cfg.pose_anchor_sigmas[2]),
+            1.0 / (cfg.pose_anchor_sigmas[3] * cfg.pose_anchor_sigmas[3]),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ],
+        dtype=np.float64,
+    )
+
+    for sigma_px in cfg.kernel_schedule_px:
+        for _ in range(cfg.iterations_per_level):
+            current = _landmark_positions_xy(params, specs, cfg)
+            shifted = np.zeros_like(current)
+            confidences = np.zeros(len(specs), dtype=np.float64)
+
+            for idx, spec in enumerate(specs):
+                if spec.kind == "center":
+                    response = center_resp
+                elif spec.kind == "capsid_ring":
+                    response = ring_resp
+                else:
+                    response = tail_resp
+
+                adaptive_radius = max(4, min(spec.search_radius_px, int(round(0.24 * float(params[3]) + 3.0))))
+                shifted[idx], conf = _mean_shift_landmark(
+                    response=response,
+                    current_xy=current[idx],
+                    sigma_px=sigma_px,
+                    search_radius=adaptive_radius,
+                )
+                confidences[idx] = max(0.10, conf) * spec.weight
+
+            displacement = (shifted - current).reshape(-1)
+            jac = _numerical_jacobian(params, specs, cfg)
+
+            lhs = np.zeros((params.size, params.size), dtype=np.float64)
+            rhs = np.zeros(params.size, dtype=np.float64)
+            for idx in range(len(specs)):
+                j_i = jac[2 * idx:2 * idx + 2, :]
+                d_i = displacement[2 * idx:2 * idx + 2]
+                w_i = confidences[idx]
+                lhs += w_i * (j_i.T @ j_i)
+                rhs += w_i * (j_i.T @ d_i)
+
+            reg = np.diag(prior_inv_vars + pose_anchor_inv_vars)
+            lhs += reg
+            rhs -= np.diag(prior_inv_vars) @ params
+            rhs -= np.diag(pose_anchor_inv_vars) @ (params - params_anchor)
+
+            try:
+                delta = np.linalg.solve(lhs + 1e-6 * np.eye(lhs.shape[0]), rhs)
+            except np.linalg.LinAlgError:
+                delta = np.linalg.lstsq(lhs + 1e-6 * np.eye(lhs.shape[0]), rhs, rcond=None)[0]
+
+            step_norm = float(np.linalg.norm(delta))
+            if step_norm > cfg.max_parameter_step_norm:
+                delta *= cfg.max_parameter_step_norm / step_norm
+
+            params = params + cfg.damping * delta
+            params[2] = math.atan2(math.sin(params[2]), math.cos(params[2]))
+            params[3] = max(6.0, float(params[3]))
+            params[4:] = np.clip(params[4:], -2.5, 2.5)
+
+            if float(np.linalg.norm(cfg.damping * delta)) < 0.02:
+                break
+
+        if debug:
+            landmark_xy = _landmark_positions_xy(params, specs, cfg)
+            tail_len_px = _polyline_length(_tail_polyline_xy_from_landmarks(landmark_xy, specs))
+            capsid_diam_px = _capsid_diameter_px_from_params(params, cfg)
+            print(
+                "[debug] sigma="
+                f"{sigma_px:.2f}px tx={params[0]:.2f} ty={params[1]:.2f} "
+                f"theta={math.degrees(params[2]):.2f}deg scale={params[3]:.2f}px "
+                f"capsid_diam={capsid_diam_px:.2f}px tail={tail_len_px:.2f}px"
+            )
+
+    return params, tail_resp, ring_resp
+
+
+def _capsid_diameter_px_from_params(params: np.ndarray, cfg: FitConfig) -> float:
+    q_radius = float(params[4])
+    scale_px = float(params[3])
+    radius_units = max(0.55, 1.0 + cfg.capsid_radius_scale * q_radius)
+    return 2.0 * radius_units * scale_px
+
+
+def _tail_length_px_from_params(params: np.ndarray, cfg: FitConfig) -> float:
+    q_tail = float(params[5])
+    scale_px = float(params[3])
+    tail_units = max(1.6, cfg.mean_tail_length_units * (1.0 + cfg.tail_length_scale * q_tail))
+    return tail_units * scale_px
+
+
+def _tail_polyline_xy_from_landmarks(landmark_xy: np.ndarray, specs: list[LandmarkSpec]) -> np.ndarray:
+    tail_points = [point for point, spec in zip(landmark_xy, specs) if spec.kind in {"neck", "tail", "tip"}]
+    if not tail_points:
+        return np.zeros((0, 2), dtype=np.float64)
+    return np.asarray(tail_points, dtype=np.float64)
+
+
+def _polyline_length(points_xy: np.ndarray) -> float:
+    if points_xy.shape[0] < 2:
+        return 0.0
+    diffs = np.diff(points_xy, axis=0)
+    seg_lengths = np.sqrt(np.sum(diffs * diffs, axis=1))
+    return float(np.sum(seg_lengths))
+
+
+def _fit_circle_least_squares(points_xy: np.ndarray) -> tuple[float, float, float]:
+    if points_xy.shape[0] < 3:
+        raise RuntimeError("Need at least three boundary points to fit a circle.")
+
+    a = np.column_stack(
+        [
+            2.0 * points_xy[:, 0],
+            2.0 * points_xy[:, 1],
+            np.ones(points_xy.shape[0], dtype=np.float64),
+        ]
+    )
+    b = points_xy[:, 0] ** 2 + points_xy[:, 1] ** 2
+    sol, *_ = np.linalg.lstsq(a, b, rcond=None)
+    cx, cy, c = sol
+    radius = math.sqrt(max(EPS, float(c + cx * cx + cy * cy)))
+    return float(cx), float(cy), float(radius)
+
+
+def _refine_capsid_circle(
+    ring_resp: np.ndarray,
+    center_xy: tuple[float, float],
+    radius_px: float,
+    theta_rad: float,
+) -> tuple[float, float, float]:
+    h, w = ring_resp.shape
+    cx0, cy0 = center_xy
+    theta_deg = math.degrees(theta_rad)
+
+    radii = np.arange(max(6.0, 0.68 * radius_px), max(0.68 * radius_px + 1.0, 1.18 * radius_px), 0.5, dtype=np.float32)
+    boundary_points: list[tuple[float, float]] = []
+
+    for angle_deg in np.arange(0.0, 360.0, 8.0):
+        delta = abs(((angle_deg - theta_deg + 180.0) % 360.0) - 180.0)
+        if delta < 42.0:
+            continue
+
+        ang = math.radians(float(angle_deg))
+        xs = cx0 + radii * math.cos(ang)
+        ys = cy0 + radii * math.sin(ang)
+        valid = (xs >= 1.0) & (xs < w - 1.0) & (ys >= 1.0) & (ys < h - 1.0)
+        if np.count_nonzero(valid) < max(4, radii.size // 3):
+            continue
+
+        xs_valid = xs[valid].astype(np.float32).reshape(1, -1)
+        ys_valid = ys[valid].astype(np.float32).reshape(1, -1)
+        profile = cv2.remap(ring_resp.astype(np.float32), xs_valid, ys_valid, interpolation=cv2.INTER_LINEAR).reshape(-1)
+        radii_valid = radii[valid].astype(np.float64)
+        if profile.size == 0:
+            continue
+
+        dist_penalty = np.abs(radii_valid - radius_px) / max(radius_px, EPS)
+        score = profile.astype(np.float64) - 0.08 * dist_penalty
+        best_idx = int(np.argmax(score))
+        if score[best_idx] < 0.12:
+            continue
+
+        best_r = float(radii_valid[best_idx])
+        boundary_points.append((cx0 + best_r * math.cos(ang), cy0 + best_r * math.sin(ang)))
+
+    if len(boundary_points) < 8:
+        return float(cx0), float(cy0), float(radius_px)
+
+    pts = np.asarray(boundary_points, dtype=np.float64)
+    for _ in range(2):
+        cx, cy, radius = _fit_circle_least_squares(pts)
+        residual = np.abs(np.sqrt((pts[:, 0] - cx) ** 2 + (pts[:, 1] - cy) ** 2) - radius)
+        keep = residual <= max(2.0, float(np.median(residual) + 1.5 * np.std(residual)))
+        if np.count_nonzero(keep) < 8:
+            break
+        pts = pts[keep]
+
+    cx, cy, radius = _fit_circle_least_squares(pts)
+    return float(cx), float(cy), float(radius)
+
+
+def fit_phage_clm(
+    image_path: Path,
+    scale_nm: float = 100.0,
+    bar_px_override: Optional[float] = None,
+    debug: bool = False,
+) -> PhageCLMResult:
+    gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        raise FileNotFoundError(f"Could not read image: {image_path}")
+
+    if bar_px_override is not None:
+        bar_px = float(bar_px_override)
+        scale_bbox = None
+        scale_polarity = None
+    else:
+        scale_bar = _find_bottom_scale_bar(gray, debug=debug)
+        bar_px = float(scale_bar.length_px)
+        scale_bbox = scale_bar.bbox_xywh
+        scale_polarity = scale_bar.polarity
+
+    if bar_px <= 0.0:
+        raise RuntimeError("Scale bar length must be positive.")
+
+    cfg = FitConfig()
+    model = _build_phage_shape_model(cfg)
+    specs = list(model.specs)
+    params, _, ring_resp = _fit_clm(
+        gray,
+        specs,
+        cfg,
+        image_path=image_path,
+        bar_px_override=bar_px_override,
+        debug=debug,
+    )
+
+    refined_cx, refined_cy, refined_radius = _refine_capsid_circle(
+        ring_resp=ring_resp,
+        center_xy=(float(params[0]), float(params[1])),
+        radius_px=0.5 * _capsid_diameter_px_from_params(params, cfg),
+        theta_rad=float(params[2]),
+    )
+    params[0] = refined_cx
+    params[1] = refined_cy
+    radius_units = max(EPS, refined_radius / max(float(params[3]), EPS))
+    params[4] = np.clip((radius_units - 1.0) / cfg.capsid_radius_scale, -2.5, 2.5)
+
+    landmark_xy = _landmark_positions_xy(params, specs, cfg)
+    tail_polyline_xy = _tail_polyline_xy_from_landmarks(landmark_xy, specs)
+    geometry = FittedPhageGeometry(
+        capsid_circle_xyr=(float(refined_cx), float(refined_cy), float(refined_radius)),
+        tail_polyline_xy=tail_polyline_xy,
+    )
+
+    px_per_nm = float(bar_px / scale_nm)
+    capsid_diameter_px = 2.0 * float(refined_radius)
+    tail_length_px = _polyline_length(tail_polyline_xy)
+    theta_deg = float(math.degrees(params[2]))
+
+    result = PhageCLMResult(
+        image_path=image_path,
+        scale_nm=float(scale_nm),
+        bar_px=float(bar_px),
+        px_per_nm=px_per_nm,
+        capsid_diameter_px=float(capsid_diameter_px),
+        capsid_diameter_nm=float(capsid_diameter_px / px_per_nm),
+        tail_length_px=float(tail_length_px),
+        tail_length_nm=float(tail_length_px / px_per_nm),
+        head_center_xy=(float(params[0]), float(params[1])),
+        theta_deg=theta_deg,
+        params=params,
+        model=model,
+        geometry=geometry,
+        landmark_xy=landmark_xy,
+        specs=specs,
+        scale_bbox_xywh=scale_bbox,
+        scale_polarity=scale_polarity,
+    )
+    return result
+
+
+def render_clm_overlay(result: PhageCLMResult) -> np.ndarray:
+    image_bgr = cv2.imread(str(result.image_path), cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image for overlay: {result.image_path}")
+
+    h, w = image_bgr.shape[:2]
+    thickness = max(2, int(round(0.004 * min(h, w))))
+
+    center = None
+    capsid_pts: list[tuple[int, int]] = []
+
+    for (x, y), spec in zip(result.landmark_xy, result.specs):
+        pt = (int(round(x)), int(round(y)))
+        if spec.kind == "center":
+            center = pt
+        elif spec.kind == "capsid_ring":
+            capsid_pts.append(pt)
+
+    if capsid_pts:
+        contour = np.array(capsid_pts, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(image_bgr, [contour], True, (0, 255, 255), thickness, cv2.LINE_AA)
+        for pt in capsid_pts:
+            cv2.circle(image_bgr, pt, max(1, thickness - 1), (0, 255, 255), -1, cv2.LINE_AA)
+
+    # circle_x, circle_y, circle_r = result.geometry.capsid_circle_xyr
+    # cv2.circle(
+    #     image_bgr,
+    #     (int(round(circle_x)), int(round(circle_y))),
+    #     int(round(circle_r)),
+    #     (255, 255, 0),
+    #     thickness,
+    #     cv2.LINE_AA,
+    # )
+
+    if result.geometry.tail_polyline_xy.shape[0] > 0:
+        tail_pts = [
+            (int(round(x)), int(round(y)))
+            for x, y in result.geometry.tail_polyline_xy
+        ]
+        tail_arr = np.array(tail_pts, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(image_bgr, [tail_arr], False, (0, 0, 255), thickness, cv2.LINE_AA)
+        if len(tail_pts) >= 2:
+            cv2.circle(image_bgr, tail_pts[0], max(1, thickness), (255, 0, 0), -1, cv2.LINE_AA)
+            cv2.circle(image_bgr, tail_pts[-1], max(1, thickness), (0, 255, 0), -1, cv2.LINE_AA)
+
+    if result.scale_bbox_xywh is not None:
+        x, y, ww, hh = result.scale_bbox_xywh
+        cv2.rectangle(image_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+
+    text = [
+        f"Capsid diameter: {result.capsid_diameter_nm:.2f} nm",
+        f"Tail length: {result.tail_length_nm:.2f} nm",
+        f"Scale bar: {result.bar_px:.1f}px = {result.scale_nm:.0f} nm",
+    ]
+    for idx, line in enumerate(text):
+        cv2.putText(
+            image_bgr,
+            line,
+            (12, 28 + idx * 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.70,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    return image_bgr
+
+
 @click.group(cls=OrderedGroup, context_settings=CLICK_CONTEXT_SETTINGS)
 @click.version_option(VERSION, "-v", "--version", prog_name="phagescale.py")
 def cli() -> None:
@@ -955,6 +1687,44 @@ def annotated_command(
         click.echo(f"Annotated image: {out_path}")
         if show_overlay:
             _show_overlay_window(overlay, f"Tail length: {result.tail_nm:.2f} nm")
+
+
+@cli.command("clm", context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--image", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Path to input image (png/jpg/tif).")
+@click.option("--scale_nm", type=float, default=100.0, show_default=True, help="Scale bar value in nm.")
+@click.option("--bar_px_override", type=float, default=None, help="Manual scale bar length in pixels.")
+@click.option("--overlay_out", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Path to save the fitted overlay image.")
+@click.option("--show_overlay", is_flag=True, help="Display the fitted overlay at the end of the run.")
+@click.option("--debug", is_flag=True, help="Enable verbose debug output.")
+def clm_command(
+    image: Path,
+    scale_nm: float,
+    bar_px_override: Optional[float],
+    overlay_out: Optional[Path],
+    show_overlay: bool,
+    debug: bool,
+) -> None:
+    """Measure capsid diameter and tail length with the fitted CLM phage model."""
+    try:
+        result = fit_phage_clm(
+            image_path=image,
+            scale_nm=scale_nm,
+            bar_px_override=bar_px_override,
+            debug=debug,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Capsid diameter: {result.capsid_diameter_nm:.2f} nm")
+    click.echo(f"Tail length: {result.tail_length_nm:.2f} nm")
+
+    if overlay_out is not None or show_overlay:
+        out_path = overlay_out if overlay_out is not None else (Path.cwd() / f"{image.stem}_clm_overlay.png")
+        overlay = render_clm_overlay(result)
+        cv2.imwrite(str(out_path), overlay)
+        click.echo(f"Overlay image: {out_path}")
+        if show_overlay:
+            _show_overlay_window(overlay, f"Capsid {result.capsid_diameter_nm:.1f} nm | Tail {result.tail_length_nm:.1f} nm")
 
 
 def main() -> None:
