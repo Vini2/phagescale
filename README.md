@@ -238,4 +238,4 @@ Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder 
 
 ## Warning
 
-PhageScale is still under active development and heavy testing. Some results might be incorrect. Different methods may give different measurements depending on how the capsid and tail are detected from the images.
+PhageScale is still under active development and heavy testing. Some results might be incorrect depending on the differences in contrast, background noise, staining effects, etc. Different methods may give different measurements depending on how the capsid and tail are detected from the images.
