@@ -52,7 +52,7 @@ Global options:
 - `-v` or `--version` shows the CLI version
 - `-h` or `--help` shows help
 
-Both subcommands support:
+All subcommands support:
 
 - `--image` to input path of the image
 - `--scale_nm` to input scale-bar length in nm
