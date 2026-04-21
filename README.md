@@ -36,11 +36,10 @@ Options:
   -h, --help     Show this message and exit.
 
 Commands:
-  measure    Measure from raw TEM images.
-  annotated  Measure from yellow/magenta-annotated figures.
-  annotated-batch
-             Measure all annotated figures listed in an Excel sheet.
-  clm        Measure with the fitted CLM phage model.
+  measure          Measure from raw TEM images.
+  annotated        Measure from yellow/magenta-annotated figures.
+  annotated-batch  Measure all annotated images listed in an Excel sheet.
+  clm              Measure with the fitted CLM phage model.
 ```
 
 PhageScale has four subcommands:
@@ -62,6 +61,17 @@ The image-level subcommands (`measure`, `annotated`, and `clm`) support:
 - `--overlay_out` for an output overlay image path
 - `--show_overlay` to display the overlay
 - printing the measured capsid diameter and tail length to `stdout`
+
+The `annotated-batch` subcommand supports:
+
+- `--images_dir` to directory containing annotated images
+- `--metadata_xlsx` path to the metadata workbook (.xlsx)
+- `--output_xlsx` path to the output workbook (.xlsx).  [required]
+- `--sheet_name` to worksheet name to read. Defaults to the first sheet
+- `--image_col` column containing the annotated image filename
+- `--scale_col` column containing the scale bar size in nm
+- `--overlay_dir` optional directory to save overlay images for successful measurements
+- `--fail_fast` to stop on the first error instead of recording failures in the output workbook
 
 ## Commands explained
 
