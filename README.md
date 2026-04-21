@@ -38,13 +38,16 @@ Options:
 Commands:
   measure    Measure from raw TEM images.
   annotated  Measure from yellow/magenta-annotated figures.
+  annotated-batch
+             Measure all annotated figures listed in an Excel sheet.
   clm        Measure with the fitted CLM phage model.
 ```
 
-PhageScale has three subcommands:
+PhageScale has four subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
 - `annotated` for figures where the head and tail has already been marked in magenta and yellow, respectively.
+- `annotated-batch` for running the annotated workflow across a metadata workbook and exporting a new Excel sheet.
 - `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
@@ -52,7 +55,7 @@ Global options:
 - `-v` or `--version` shows the CLI version
 - `-h` or `--help` shows help
 
-All subcommands support:
+The image-level subcommands (`measure`, `annotated`, and `clm`) support:
 
 - `--image` to input path of the image
 - `--scale_nm` to input scale-bar length in nm
@@ -176,7 +179,78 @@ python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.pn
 ```
 
 
-### 3. `clm` - Fit constrained local model (CLM) fitted phage model from raw TEM images
+### 3. `annotated-batch` - Batch measuring from an Excel metadata sheet
+
+You can display the help message using `python phagescale.py annotated-batch --help`.
+
+```bash
+Usage: phagescale.py annotated-batch [OPTIONS]
+
+  Measure all annotated figures listed in an Excel sheet.
+
+Options:
+  --images_dir DIRECTORY   Directory containing annotated images.  [required]
+  --metadata_xlsx FILE     Path to the metadata workbook (.xlsx).  [required]
+  --output_xlsx FILE       Path to the output workbook (.xlsx).  [required]
+  --sheet_name TEXT        Worksheet name to read. Defaults to the first sheet.
+  --image_col TEXT         Column containing the annotated image filename.
+                           [default: File name]
+  --scale_col TEXT         Column containing the scale bar size in nm.
+                           [default: Scale bar measurement (nm)]
+  --overlay_dir DIRECTORY  Optional directory to save overlay images for
+                           successful measurements.
+  --fail_fast              Stop on the first error instead of recording
+                           failures in the output workbook.
+  -h, --help               Show this message and exit.
+```
+
+Use this command when you have a workbook that lists annotated image filenames and their scale-bar sizes in nm.
+
+```bash
+python phagescale.py annotated-batch \
+  --images_dir /path/to/annotated-images \
+  --metadata_xlsx /path/to/input-metadata.xlsx \
+  --output_xlsx /path/to/output-measurements.xlsx
+```
+
+By default, the input workbook is read from the first worksheet and expects these columns:
+
+- `File name`
+- `Scale bar measurement (nm)`
+
+You can override those defaults with:
+
+- `--sheet_name` to choose a specific worksheet
+- `--image_col` to point at a different filename column
+- `--scale_col` to point at a different scale column
+
+The output workbook preserves the original columns and appends these measurement fields:
+
+- `Measurement status`
+- `Measurement error`
+- `Detected scale bar (px)`
+- `Detected scale bar polarity`
+- `Capsid diameter (px)`
+- `Capsid diameter (nm)`
+- `Tail length (px)`
+- `Tail length (nm)`
+- `Image path`
+- `Metadata row`
+
+Optional overlay export:
+
+```bash
+python phagescale.py annotated-batch \
+  --images_dir /path/to/annotated-images \
+  --metadata_xlsx /path/to/input-metadata.xlsx \
+  --output_xlsx /path/to/output-measurements.xlsx \
+  --overlay_dir /path/to/overlay-output
+```
+
+If you want the run to stop immediately on the first bad row instead of writing per-row errors to the output workbook, add `--fail_fast`.
+
+
+### 4. `clm` - Fit constrained local model (CLM) fitted phage model from raw TEM images
 
 You can display the help message using `python phagescale.py clm --help`.
 
