@@ -12,9 +12,12 @@ from __future__ import annotations
 import heapq
 import math
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
+from zipfile import ZIP_DEFLATED, ZipFile
+import xml.etree.ElementTree as ET
 
 import click
 import cv2
@@ -105,6 +108,341 @@ class AnnotatedTailMeasurement:
     capsid_diameter_nm: float
     capsid_center_xy: tuple[float, float]
     capsid_radius_px: float
+
+
+XLSX_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+XLSX_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+XLSX_PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+XML_NS = "http://www.w3.org/XML/1998/namespace"
+XLSX_NS = {"a": XLSX_MAIN_NS}
+
+ET.register_namespace("", XLSX_MAIN_NS)
+ET.register_namespace("r", XLSX_REL_NS)
+
+
+def _xlsx_qn(tag: str) -> str:
+    return f"{{{XLSX_MAIN_NS}}}{tag}"
+
+
+def _xlsx_col_index_from_letters(letters: str) -> int:
+    idx = 0
+    for ch in letters:
+        if not ch.isalpha():
+            continue
+        idx = idx * 26 + (ord(ch.upper()) - ord("A") + 1)
+    if idx <= 0:
+        raise ValueError(f"Invalid Excel column reference: {letters!r}")
+    return idx - 1
+
+
+def _xlsx_col_letters(col_idx: int) -> str:
+    if col_idx < 0:
+        raise ValueError(f"Excel column index must be >= 0, got {col_idx}")
+
+    parts: list[str] = []
+    cur = col_idx + 1
+    while cur > 0:
+        cur, rem = divmod(cur - 1, 26)
+        parts.append(chr(ord("A") + rem))
+    return "".join(reversed(parts))
+
+
+def _normalize_header_key(value: object) -> str:
+    return "".join(ch.lower() for ch in str(value).strip() if ch.isalnum())
+
+
+def _dedupe_headers(headers: list[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    deduped: list[str] = []
+    for idx, header in enumerate(headers, start=1):
+        base = (header or "").strip() or f"Column {idx}"
+        count = counts.get(base, 0)
+        counts[base] = count + 1
+        deduped.append(base if count == 0 else f"{base} ({count + 1})")
+    return deduped
+
+
+def _coerce_xlsx_scalar(text: str) -> object:
+    raw = text.strip()
+    if raw == "":
+        return ""
+
+    lowered = raw.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+
+    try:
+        num = float(raw)
+    except ValueError:
+        return raw
+
+    if math.isfinite(num) and num.is_integer():
+        return int(num)
+    return num
+
+
+def _read_xlsx_cell_value(cell: ET.Element, shared_strings: list[str]) -> object:
+    cell_type = cell.attrib.get("t")
+
+    if cell_type == "inlineStr":
+        return "".join(text.text or "" for text in cell.iterfind(".//a:t", XLSX_NS))
+
+    value_elem = cell.find(_xlsx_qn("v"))
+    if value_elem is None or value_elem.text is None:
+        return ""
+
+    raw = value_elem.text
+    if cell_type == "s":
+        shared_idx = int(raw)
+        if shared_idx < 0 or shared_idx >= len(shared_strings):
+            raise ValueError(f"Shared string index out of range: {shared_idx}")
+        return shared_strings[shared_idx]
+    if cell_type in {"str", "d"}:
+        return raw
+    if cell_type == "b":
+        return raw == "1"
+
+    return _coerce_xlsx_scalar(raw)
+
+
+def _read_xlsx_rows(xlsx_path: Path, sheet_name: str | None = None) -> tuple[list[str], list[dict[str, object]]]:
+    with ZipFile(xlsx_path) as archive:
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            shared_root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+            for item in shared_root.findall("a:si", XLSX_NS):
+                shared_strings.append("".join(text.text or "" for text in item.iterfind(".//a:t", XLSX_NS)))
+
+        workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+        rels_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        rel_target_by_id = {
+            rel.attrib["Id"]: rel.attrib["Target"]
+            for rel in rels_root
+            if rel.attrib.get("Type", "").endswith("/worksheet")
+        }
+
+        sheets = workbook_root.find(_xlsx_qn("sheets"))
+        if sheets is None or not list(sheets):
+            raise RuntimeError(f"No worksheets found in {xlsx_path}")
+
+        selected_sheet = None
+        if sheet_name is None:
+            selected_sheet = list(sheets)[0]
+        else:
+            desired = sheet_name.strip()
+            for sheet in sheets:
+                if sheet.attrib.get("name", "").strip() == desired:
+                    selected_sheet = sheet
+                    break
+            if selected_sheet is None:
+                available = ", ".join(sheet.attrib.get("name", "") for sheet in sheets)
+                raise RuntimeError(f"Worksheet {sheet_name!r} was not found in {xlsx_path}. Available sheets: {available}")
+
+        rel_id = selected_sheet.attrib.get(f"{{{XLSX_REL_NS}}}id")
+        if not rel_id or rel_id not in rel_target_by_id:
+            raise RuntimeError(f"Could not resolve worksheet XML for {selected_sheet.attrib.get('name', '<unknown>')}")
+
+        target = rel_target_by_id[rel_id]
+        if not target.startswith("xl/"):
+            target = f"xl/{target.lstrip('/')}"
+
+        sheet_root = ET.fromstring(archive.read(target))
+        rows = sheet_root.findall(".//a:sheetData/a:row", XLSX_NS)
+        if not rows:
+            return [], []
+
+        header_row = None
+        data_row_maps: list[dict[int, object]] = []
+        for row in rows:
+            row_map: dict[int, object] = {}
+            for cell in row.findall("a:c", XLSX_NS):
+                ref = cell.attrib.get("r", "")
+                letters = "".join(ch for ch in ref if ch.isalpha())
+                if not letters:
+                    continue
+                row_map[_xlsx_col_index_from_letters(letters)] = _read_xlsx_cell_value(cell, shared_strings)
+            if not row_map:
+                continue
+            if header_row is None:
+                header_row = row_map
+            else:
+                data_row_maps.append(row_map)
+
+        if header_row is None:
+            return [], []
+
+        max_header_idx = max(header_row)
+        headers = _dedupe_headers(
+            [str(header_row.get(col_idx, "")).strip() or f"Column {col_idx + 1}" for col_idx in range(max_header_idx + 1)]
+        )
+
+        records: list[dict[str, object]] = []
+        for row_map in data_row_maps:
+            if row_map and max(row_map) >= len(headers):
+                for col_idx in range(len(headers), max(row_map) + 1):
+                    headers.append(f"Column {col_idx + 1}")
+            record = {header: row_map.get(col_idx, "") for col_idx, header in enumerate(headers)}
+            if all(value in {"", None} for value in record.values()):
+                continue
+            records.append(record)
+
+        return headers, records
+
+
+def _match_header_name(headers: list[str], desired_header: str) -> str:
+    if desired_header in headers:
+        return desired_header
+
+    desired_key = _normalize_header_key(desired_header)
+    for header in headers:
+        if _normalize_header_key(header) == desired_key:
+            return header
+
+    available = ", ".join(headers)
+    raise RuntimeError(f"Column {desired_header!r} was not found. Available columns: {available}")
+
+
+def _is_excel_number(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (int, float, np.integer, np.floating)) and math.isfinite(float(value))
+
+
+def _build_simple_xlsx_sheet(headers: list[str], rows: list[dict[str, object]]) -> bytes:
+    worksheet = ET.Element(_xlsx_qn("worksheet"))
+    sheet_data = ET.SubElement(worksheet, _xlsx_qn("sheetData"))
+
+    ordered_rows: list[list[object]] = [headers]
+    for record in rows:
+        ordered_rows.append([record.get(header, "") for header in headers])
+
+    for row_idx, values in enumerate(ordered_rows, start=1):
+        row_elem = ET.SubElement(sheet_data, _xlsx_qn("row"), {"r": str(row_idx)})
+        for col_idx, value in enumerate(values):
+            if value in {"", None}:
+                continue
+            cell_ref = f"{_xlsx_col_letters(col_idx)}{row_idx}"
+            cell_elem = ET.SubElement(row_elem, _xlsx_qn("c"), {"r": cell_ref})
+            if _is_excel_number(value):
+                ET.SubElement(cell_elem, _xlsx_qn("v")).text = f"{float(value):.15g}"
+            else:
+                cell_elem.set("t", "inlineStr")
+                inline = ET.SubElement(cell_elem, _xlsx_qn("is"))
+                text_elem = ET.SubElement(inline, _xlsx_qn("t"))
+                text_value = str(value)
+                if text_value != text_value.strip():
+                    text_elem.set(f"{{{XML_NS}}}space", "preserve")
+                text_elem.text = text_value
+
+    return ET.tostring(worksheet, encoding="utf-8", xml_declaration=True)
+
+
+def _write_xlsx_rows(
+    output_path: Path,
+    headers: list[str],
+    rows: list[dict[str, object]],
+    *,
+    sheet_name: str = "Measurements",
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_sheet_name = (sheet_name or "Measurements").strip()[:31] or "Measurements"
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    workbook_root = ET.Element(_xlsx_qn("workbook"))
+    sheets_elem = ET.SubElement(workbook_root, _xlsx_qn("sheets"))
+    ET.SubElement(
+        sheets_elem,
+        _xlsx_qn("sheet"),
+        {
+            "name": safe_sheet_name,
+            "sheetId": "1",
+            f"{{{XLSX_REL_NS}}}id": "rId1",
+        },
+    )
+    workbook_xml = ET.tostring(workbook_root, encoding="utf-8", xml_declaration=True)
+    sheet_xml = _build_simple_xlsx_sheet(headers, rows)
+
+    content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>
+"""
+    package_rels = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="{XLSX_PACKAGE_REL_NS}">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>
+"""
+    workbook_rels = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="{XLSX_PACKAGE_REL_NS}">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>
+"""
+    styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1">
+    <font><sz val="11"/><name val="Calibri"/><family val="2"/></font>
+  </fonts>
+  <fills count="2">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+  </fills>
+  <borders count="1">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+  </cellXfs>
+  <cellStyles count="1">
+    <cellStyle name="Normal" xfId="0" builtinId="0"/>
+  </cellStyles>
+</styleSheet>
+"""
+    core_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:creator>phagescale.py</dc:creator>
+  <cp:lastModifiedBy>phagescale.py</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">{timestamp}</dcterms:modified>
+</cp:coreProperties>
+"""
+    app_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>phagescale.py</Application>
+  <HeadingPairs>
+    <vt:vector size="2" baseType="variant">
+      <vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant>
+      <vt:variant><vt:i4>1</vt:i4></vt:variant>
+    </vt:vector>
+  </HeadingPairs>
+  <TitlesOfParts>
+    <vt:vector size="1" baseType="lpstr">
+      <vt:lpstr>{safe_sheet_name}</vt:lpstr>
+    </vt:vector>
+  </TitlesOfParts>
+</Properties>
+"""
+
+    with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", package_rels)
+        archive.writestr("docProps/app.xml", app_xml)
+        archive.writestr("docProps/core.xml", core_xml)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        archive.writestr("xl/styles.xml", styles_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
 
 
 def _odd(n: int, minimum: int = 3) -> int:
@@ -626,10 +964,10 @@ def _iter_skeleton_neighbors(y: int, x: int) -> Iterable[tuple[int, int, float]]
             yield y + dy, x + dx, weight
 
 
-def _largest_mask_component(mask: np.ndarray) -> np.ndarray:
+def _largest_mask_component(mask: np.ndarray, *, label_name: str) -> np.ndarray:
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     if num_labels <= 1:
-        raise RuntimeError("Could not find a yellow tail annotation.")
+        raise RuntimeError(f"Could not find a {label_name} annotation.")
 
     best_label = None
     best_area = -1
@@ -640,7 +978,7 @@ def _largest_mask_component(mask: np.ndarray) -> np.ndarray:
             best_area = area
 
     if best_label is None or best_area < 20:
-        raise RuntimeError("Yellow annotation was detected, but it is too small to measure.")
+        raise RuntimeError(f"The {label_name} annotation was detected, but it is too small to measure.")
     return labels == best_label
 
 
@@ -659,13 +997,13 @@ def _detect_yellow_tail_mask(image_bgr: np.ndarray) -> np.ndarray:
         np.ones((2, 2), dtype=np.uint8),
         iterations=1,
     ) > 0
-    return _largest_mask_component(yellow)
+    return _largest_mask_component(yellow, label_name="yellow tail")
 
 
 def _detect_magenta_capsid_mask(image_bgr: np.ndarray) -> np.ndarray:
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-    # Magenta/pink range: hue 140-170 (since OpenCV hue is 0-180, 300-330 deg /2)
-    magenta = cv2.inRange(hsv, (140, 50, 50), (170, 255, 255)) > 0
+    # Magenta/pink annotations can shift slightly after JPEG compression, so keep the hue band tolerant.
+    magenta = cv2.inRange(hsv, (130, 40, 40), (175, 255, 255)) > 0
     magenta = cv2.morphologyEx(
         (magenta.astype(np.uint8) * 255),
         cv2.MORPH_CLOSE,
@@ -678,7 +1016,7 @@ def _detect_magenta_capsid_mask(image_bgr: np.ndarray) -> np.ndarray:
         np.ones((2, 2), dtype=np.uint8),
         iterations=1,
     ) > 0
-    return _largest_mask_component(magenta)
+    return _largest_mask_component(magenta, label_name="magenta capsid")
 
 
 def _compute_capsid_diameter_px(mask: np.ndarray) -> tuple[float, tuple[float, float], float]:
@@ -786,15 +1124,73 @@ def _measure_candidate_span(candidate_mask: np.ndarray) -> int:
     return int(xs.max() - xs.min() + 1)
 
 
-def _find_bottom_scale_bar(gray: np.ndarray, debug: bool = False) -> AnnotatedScaleBarDetection:
+def _score_scale_bar_candidate(
+    gray: np.ndarray,
+    detection: AnnotatedScaleBarDetection,
+    *,
+    prefer_bottom: bool,
+) -> float:
     h, w = gray.shape
-    y0 = int(round(h * 0.70))
-    roi = gray[y0:, :]
+    x, y, ww, hh = detection.bbox_xywh
 
-    min_width = max(18, int(round(w * 0.04)))
-    max_width = int(round(w * 0.45))
-    max_height = max(10, int(round(roi.shape[0] * 0.08)))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, int(round(w * 0.05))), 1))
+    y0 = max(0, y - 4)
+    y1 = min(h, y + hh + 4)
+    x0 = max(0, x - 4)
+    x1 = min(w, x + ww + 4)
+    neighborhood = gray[y0:y1, x0:x1].astype(np.float32)
+    candidate = gray[y:y + hh, x:x + ww].astype(np.float32)
+
+    contrast = 0.0
+    if neighborhood.size > 0 and candidate.size > 0:
+        mask = np.ones(neighborhood.shape, dtype=bool)
+        mask[(y - y0):(y - y0 + hh), (x - x0):(x - x0 + ww)] = False
+        context = neighborhood[mask]
+        if context.size > 0:
+            candidate_mean = float(np.mean(candidate))
+            context_mean = float(np.mean(context))
+            if detection.polarity == "dark":
+                contrast = context_mean - candidate_mean
+            else:
+                contrast = candidate_mean - context_mean
+
+    edge_dist = float(min(x, y, max(0, w - (x + ww)), max(0, h - (y + hh))))
+    edge_bonus = max(0.0, 0.18 * min(h, w) - edge_dist)
+    bottom_bonus = max(0.0, (y + hh) - 0.72 * h) if prefer_bottom else 0.0
+    aspect = detection.length_px / max(float(hh), 1.0)
+    return (
+        float(detection.length_px)
+        + 1.1 * contrast
+        + 0.30 * edge_bonus
+        + 0.12 * bottom_bonus
+        + 2.5 * aspect
+        - 1.8 * hh
+    )
+
+
+def _collect_scale_bar_candidates(
+    gray: np.ndarray,
+    *,
+    y_start: int,
+    y_end: int,
+    prefer_bottom: bool,
+) -> list[tuple[float, AnnotatedScaleBarDetection]]:
+    h, w = gray.shape
+    roi = gray[max(0, y_start):min(h, y_end), :]
+    if roi.size == 0:
+        return []
+
+    min_width = max(18, int(round(w * 0.035)))
+    max_width_frac = 0.55 if prefer_bottom else 0.72
+    max_width = int(round(w * max_width_frac))
+    max_height = max(
+        10,
+        min(
+            int(round(roi.shape[0] * 0.12)),
+            int(round(h * 0.05)),
+        ),
+    )
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, int(round(w * 0.05))), 1))
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(3, int(round(w * 0.01))), 3))
 
     candidates: list[tuple[float, AnnotatedScaleBarDetection]] = []
     percentile_specs = [
@@ -803,35 +1199,120 @@ def _find_bottom_scale_bar(gray: np.ndarray, debug: bool = False) -> AnnotatedSc
     ]
 
     for polarity, mask in percentile_specs:
-        opened = cv2.morphologyEx(mask.astype(np.uint8) * 255, cv2.MORPH_OPEN, kernel)
-        contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cleaned = cv2.morphologyEx(mask.astype(np.uint8) * 255, cv2.MORPH_CLOSE, close_kernel)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, open_kernel)
+
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             x, y, ww, hh = cv2.boundingRect(contour)
             if ww < min_width or ww > max_width:
                 continue
             if hh < 1 or hh > max_height:
                 continue
-            if ww / float(hh) < 6.0:
-                continue
-            if (y + hh) < int(0.25 * roi.shape[0]):
+            if ww / float(max(hh, 1)) < 4.5:
                 continue
 
-            candidate_mask = opened[y:y + hh, x:x + ww] > 0
+            candidate_mask = cleaned[y:y + hh, x:x + ww] > 0
             span_px = _measure_candidate_span(candidate_mask)
             if span_px < min_width:
                 continue
 
-            fill = float(cv2.contourArea(contour) / (ww * hh + 1e-6))
-            score = span_px + 0.30 * (y + hh) + 25.0 * fill - 2.0 * hh
             detection = AnnotatedScaleBarDetection(
                 length_px=float(span_px),
-                bbox_xywh=(int(x), int(y + y0), int(ww), int(hh)),
+                bbox_xywh=(int(x), int(y + y_start), int(ww), int(hh)),
                 polarity=polarity,
             )
+            score = _score_scale_bar_candidate(gray, detection, prefer_bottom=prefer_bottom)
             candidates.append((score, detection))
 
+    return candidates
+
+
+def _find_scale_bar_by_hough(gray: np.ndarray) -> AnnotatedScaleBarDetection | None:
+    h, w = gray.shape
+    min_length = max(18, int(round(w * 0.035)))
+    max_length = int(round(w * 0.72))
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 50, 150)
+    lines = cv2.HoughLinesP(
+        edges,
+        rho=1.0,
+        theta=math.pi / 180.0,
+        threshold=32,
+        minLineLength=min_length,
+        maxLineGap=max(4, int(round(w * 0.01))),
+    )
+    if lines is None:
+        return None
+
+    best: tuple[float, AnnotatedScaleBarDetection] | None = None
+    context_radius = max(5, int(round(min(h, w) * 0.01)))
+
+    for line in lines[:, 0, :]:
+        x1, y1, x2, y2 = map(int, line)
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.hypot(dx, dy)
+        if length < min_length or length > max_length:
+            continue
+
+        angle_deg = abs(math.degrees(math.atan2(dy, dx)))
+        if min(angle_deg, abs(180.0 - angle_deg)) > 6.0:
+            continue
+
+        x_min, x_max = sorted((x1, x2))
+        y_min, y_max = sorted((y1, y2))
+        border_dist = min(y_min, h - 1 - y_max, x_min, w - 1 - x_max)
+        if border_dist < 2:
+            continue
+
+        y0 = max(0, y_min - context_radius)
+        y1_ctx = min(h, y_max + context_radius + 1)
+        x0 = max(0, x_min - context_radius)
+        x1_ctx = min(w, x_max + context_radius + 1)
+        region = gray[y0:y1_ctx, x0:x1_ctx].astype(np.float32)
+        if region.size == 0:
+            continue
+
+        line_mask = np.zeros(region.shape, dtype=np.uint8)
+        cv2.line(
+            line_mask,
+            (x_min - x0, int(round((y1 + y2) / 2.0)) - y0),
+            (x_max - x0, int(round((y1 + y2) / 2.0)) - y0),
+            255,
+            1,
+            cv2.LINE_AA,
+        )
+        line_pixels = region[line_mask > 0]
+        context_mask = cv2.dilate(line_mask, np.ones((5, 5), dtype=np.uint8), iterations=1) > 0
+        context_pixels = region[context_mask & (line_mask == 0)]
+        if line_pixels.size == 0 or context_pixels.size == 0:
+            continue
+
+        polarity = "dark" if float(np.mean(line_pixels)) < float(np.mean(context_pixels)) else "bright"
+        detection = AnnotatedScaleBarDetection(
+            length_px=float(length),
+            bbox_xywh=(int(x_min), int(y_min), int(max(1, round(length))), int(max(1, y_max - y_min + 1))),
+            polarity=polarity,
+        )
+        score = _score_scale_bar_candidate(gray, detection, prefer_bottom=False) + 12.0
+        if best is None or score > best[0]:
+            best = (score, detection)
+
+    return None if best is None else best[1]
+
+
+def _find_bottom_scale_bar(gray: np.ndarray, debug: bool = False) -> AnnotatedScaleBarDetection:
+    h, w = gray.shape
+    candidates: list[tuple[float, AnnotatedScaleBarDetection]] = []
+    candidates.extend(_collect_scale_bar_candidates(gray, y_start=int(round(h * 0.68)), y_end=h, prefer_bottom=True))
+    candidates.extend(_collect_scale_bar_candidates(gray, y_start=0, y_end=h, prefer_bottom=False))
+
+    hough_detection = _find_scale_bar_by_hough(gray)
+    if hough_detection is not None:
+        candidates.append((_score_scale_bar_candidate(gray, hough_detection, prefer_bottom=False) + 12.0, hough_detection))
+
     if not candidates:
-        raise RuntimeError("Could not find a scale bar in the bottom region of the image.")
+        raise RuntimeError("Could not find a scale bar in the image.")
 
     candidates.sort(key=lambda item: item[0], reverse=True)
     detection = candidates[0][1]
@@ -919,6 +1400,171 @@ def render_annotated_tail_overlay(result: AnnotatedTailMeasurement) -> np.ndarra
         cv2.LINE_AA,
     )
     return img_bgr
+
+
+def _parse_required_float(value: object, *, field_name: str, row_number: int) -> float:
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        numeric = float(value)
+    else:
+        text = str(value).strip()
+        if text == "":
+            raise RuntimeError(f"Row {row_number}: {field_name} is blank.")
+        try:
+            numeric = float(text)
+        except ValueError as exc:
+            raise RuntimeError(f"Row {row_number}: {field_name} value {value!r} is not numeric.") from exc
+
+    if not math.isfinite(numeric):
+        raise RuntimeError(f"Row {row_number}: {field_name} value {value!r} is not finite.")
+    return numeric
+
+
+def _build_image_lookup(images_dir: Path) -> tuple[
+    list[Path],
+    dict[str, list[Path]],
+    dict[str, list[Path]],
+]:
+    files = [path for path in images_dir.iterdir() if path.is_file()]
+    by_lower_name: dict[str, list[Path]] = {}
+    by_lower_stem: dict[str, list[Path]] = {}
+    for path in files:
+        by_lower_name.setdefault(path.name.lower(), []).append(path)
+        by_lower_stem.setdefault(path.stem.lower(), []).append(path)
+    return files, by_lower_name, by_lower_stem
+
+
+def _resolve_batch_image_path(
+    images_dir: Path,
+    image_name: str,
+    *,
+    image_files: list[Path],
+    by_lower_name: dict[str, list[Path]],
+    by_lower_stem: dict[str, list[Path]],
+) -> Path:
+    direct_path = images_dir / image_name
+    if direct_path.is_file():
+        return direct_path
+
+    name_matches = by_lower_name.get(image_name.lower(), [])
+    if len(name_matches) == 1:
+        return name_matches[0]
+
+    image_stem = Path(image_name).stem.lower()
+    stem_matches = by_lower_stem.get(image_stem, [])
+    if len(stem_matches) == 1:
+        return stem_matches[0]
+
+    prefix_matches = [path for path in image_files if path.stem.lower().startswith(image_stem)]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+
+    raise FileNotFoundError(f"image was not found: {direct_path}")
+
+
+def measure_annotated_batch(
+    *,
+    images_dir: Path,
+    metadata_xlsx: Path,
+    output_xlsx: Path,
+    sheet_name: str | None = None,
+    image_col: str = "File name",
+    scale_col: str = "Scale bar measurement (nm)",
+    overlay_dir: Path | None = None,
+    fail_fast: bool = False,
+) -> tuple[int, int]:
+    headers, records = _read_xlsx_rows(metadata_xlsx, sheet_name=sheet_name)
+    if not headers or not records:
+        raise RuntimeError(f"No data rows were found in {metadata_xlsx}")
+
+    image_header = _match_header_name(headers, image_col)
+    scale_header = _match_header_name(headers, scale_col)
+    image_files, by_lower_name, by_lower_stem = _build_image_lookup(images_dir)
+
+    if overlay_dir is not None:
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+
+    output_headers = list(headers)
+    extra_headers = [
+        "Metadata row",
+        "Image path",
+        "Measurement status",
+        "Measurement error",
+        "Detected scale bar (px)",
+        "Detected scale bar polarity",
+        "Capsid diameter (px)",
+        "Capsid diameter (nm)",
+        "Tail length (px)",
+        "Tail length (nm)",
+        "Overlay path",
+    ]
+    for header in extra_headers:
+        if header not in output_headers:
+            output_headers.append(header)
+
+    output_rows: list[dict[str, object]] = []
+    success_count = 0
+    failure_count = 0
+
+    for row_idx, record in enumerate(records, start=2):
+        output_record = {header: record.get(header, "") for header in headers}
+        output_record.update({
+            "Metadata row": row_idx,
+            "Image path": "",
+            "Measurement status": "error",
+            "Measurement error": "",
+            "Detected scale bar (px)": "",
+            "Detected scale bar polarity": "",
+            "Capsid diameter (px)": "",
+            "Capsid diameter (nm)": "",
+            "Tail length (px)": "",
+            "Tail length (nm)": "",
+            "Overlay path": "",
+        })
+
+        image_name = str(record.get(image_header, "")).strip()
+        try:
+            if image_name == "":
+                raise RuntimeError(f"Row {row_idx}: {image_header} is blank.")
+
+            image_path = _resolve_batch_image_path(
+                images_dir,
+                image_name,
+                image_files=image_files,
+                by_lower_name=by_lower_name,
+                by_lower_stem=by_lower_stem,
+            )
+            output_record["Image path"] = str(image_path)
+
+            scale_nm = _parse_required_float(record.get(scale_header, ""), field_name=scale_header, row_number=row_idx)
+            result = measure_annotated_tail(image_path=image_path, scale_nm=scale_nm)
+
+            output_record["Measurement status"] = "ok"
+            output_record["Detected scale bar (px)"] = float(result.bar_px)
+            output_record["Detected scale bar polarity"] = result.scale_polarity or ""
+            output_record["Capsid diameter (px)"] = float(result.capsid_diameter_px)
+            output_record["Capsid diameter (nm)"] = float(result.capsid_diameter_nm)
+            output_record["Tail length (px)"] = float(result.tail_px)
+            output_record["Tail length (nm)"] = float(result.tail_nm)
+
+            if overlay_dir is not None:
+                overlay_path = overlay_dir / f"{Path(image_name).stem}_annotated_overlay.png"
+                overlay = render_annotated_tail_overlay(result)
+                cv2.imwrite(str(overlay_path), overlay)
+                output_record["Overlay path"] = str(overlay_path)
+
+            success_count += 1
+        except Exception as exc:
+            failure_count += 1
+            error_text = str(exc)
+            if not error_text.startswith(f"Row {row_idx}:"):
+                error_text = f"Row {row_idx}: {error_text}"
+            output_record["Measurement error"] = error_text
+            if fail_fast:
+                raise
+        output_rows.append(output_record)
+
+    _write_xlsx_rows(output_xlsx, output_headers, output_rows, sheet_name="Annotated measurements")
+    return success_count, failure_count
 
 
 def _show_overlay_window(img_bgr: np.ndarray, title: str) -> None:
@@ -1741,6 +2387,47 @@ def annotated_command(
         click.echo(f"Annotated image: {out_path}")
         if show_overlay:
             _show_overlay_window(overlay, f"Capsid: {result.capsid_diameter_nm:.2f} nm, Tail: {result.tail_nm:.2f} nm")
+
+
+@cli.command("annotated-batch", context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--images_dir", required=True, type=click.Path(exists=True, file_okay=False, path_type=Path), help="Directory containing annotated images.")
+@click.option("--metadata_xlsx", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Path to the metadata workbook (.xlsx).")
+@click.option("--output_xlsx", required=True, type=click.Path(dir_okay=False, path_type=Path), help="Path to the output workbook (.xlsx).")
+@click.option("--sheet_name", default=None, help="Worksheet name to read. Defaults to the first sheet.")
+@click.option("--image_col", default="File name", show_default=True, help="Column containing the annotated image filename.")
+@click.option("--scale_col", default="Scale bar measurement (nm)", show_default=True, help="Column containing the scale bar size in nm.")
+@click.option("--overlay_dir", type=click.Path(file_okay=False, path_type=Path), default=None, help="Optional directory to save overlay images for successful measurements.")
+@click.option("--fail_fast", is_flag=True, help="Stop on the first error instead of recording failures in the output workbook.")
+def annotated_batch_command(
+    images_dir: Path,
+    metadata_xlsx: Path,
+    output_xlsx: Path,
+    sheet_name: Optional[str],
+    image_col: str,
+    scale_col: str,
+    overlay_dir: Optional[Path],
+    fail_fast: bool,
+) -> None:
+    """Measure all annotated images listed in an Excel sheet."""
+    try:
+        success_count, failure_count = measure_annotated_batch(
+            images_dir=images_dir,
+            metadata_xlsx=metadata_xlsx,
+            output_xlsx=output_xlsx,
+            sheet_name=sheet_name,
+            image_col=image_col,
+            scale_col=scale_col,
+            overlay_dir=overlay_dir,
+            fail_fast=fail_fast,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Output workbook: {output_xlsx}")
+    click.echo(f"Measured images: {success_count}")
+    click.echo(f"Failed images: {failure_count}")
+    if overlay_dir is not None:
+        click.echo(f"Overlay directory: {overlay_dir}")
 
 
 @cli.command("clm", context_settings=CLICK_CONTEXT_SETTINGS)
