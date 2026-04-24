@@ -2440,7 +2440,7 @@ def annotated_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure from yellow/magenta-annotated figures."""
+    """Measure from annotated figures with magenta capsids, yellow tails, and optional green scale bars."""
     try:
         result = measure_annotated_tail(image_path=image, scale_nm=scale_nm)
     except Exception as exc:
