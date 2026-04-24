@@ -28,6 +28,7 @@ from skimage.morphology import skeletonize
 
 CLICK_CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 VERSION = "0.1.0"
+SCALE_BAR_OVERLAY_COLOR_BGR = (0, 165, 255)
 
 
 class OrderedGroup(click.Group):
@@ -944,7 +945,7 @@ def render_tail_overlay(image_path: str, result: TailMeasurement) -> np.ndarray:
 
     if result.scale_bbox_xywh is not None:
         x, y, ww, hh = result.scale_bbox_xywh
-        cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+        cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), SCALE_BAR_OVERLAY_COLOR_BGR, thickness, cv2.LINE_AA)
 
     text1 = f"Capsid: {2 * result.head_r * result.px_per_nm:.2f} nm"
     text2 = f"Tail: {result.tail_nm:.2f} nm"
@@ -1122,6 +1123,76 @@ def _measure_candidate_span(candidate_mask: np.ndarray) -> int:
     if xs.size == 0:
         return 0
     return int(xs.max() - xs.min() + 1)
+
+
+def _find_green_annotated_scale_bar(image_bgr: np.ndarray) -> AnnotatedScaleBarDetection | None:
+    h, w = image_bgr.shape[:2]
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+
+    # Green scale-bar annotations are drawn as thin bright guide lines.
+    green_mask = cv2.inRange(hsv, (40, 80, 80), (80, 255, 255))
+    green_mask = cv2.morphologyEx(
+        green_mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+        iterations=1,
+    )
+    green_mask = cv2.morphologyEx(
+        green_mask,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1)),
+        iterations=1,
+    )
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(green_mask, connectivity=8)
+    if num_labels <= 1:
+        return None
+
+    min_length = max(18, int(round(min(h, w) * 0.035)))
+    max_length = int(round(max(h, w) * 0.98))
+    max_thickness = max(6, int(round(min(h, w) * 0.05)))
+
+    best: tuple[float, AnnotatedScaleBarDetection] | None = None
+    for label_idx in range(1, num_labels):
+        x, y, ww, hh, area = (
+            int(stats[label_idx, cv2.CC_STAT_LEFT]),
+            int(stats[label_idx, cv2.CC_STAT_TOP]),
+            int(stats[label_idx, cv2.CC_STAT_WIDTH]),
+            int(stats[label_idx, cv2.CC_STAT_HEIGHT]),
+            int(stats[label_idx, cv2.CC_STAT_AREA]),
+        )
+        if area < 20:
+            continue
+        if ww < 1 or hh < 1:
+            continue
+        if ww > max_length and hh > max_length:
+            continue
+
+        component_mask = labels[y:y + hh, x:x + ww] == label_idx
+        span_x = _measure_candidate_span(component_mask)
+        span_y = _measure_candidate_span(component_mask.T)
+        long_span = max(span_x, span_y)
+        short_span = max(1, min(span_x, span_y))
+        if long_span < min_length or long_span > max_length:
+            continue
+        if short_span > max_thickness:
+            continue
+        if long_span / float(short_span) < 6.0:
+            continue
+
+        edge_dist = float(min(x, y, max(0, w - (x + ww)), max(0, h - (y + hh))))
+        edge_bonus = max(0.0, 0.20 * min(h, w) - edge_dist)
+        score = float(long_span) + 4.0 * (long_span / float(short_span)) + 0.20 * edge_bonus - 1.5 * short_span
+
+        detection = AnnotatedScaleBarDetection(
+            length_px=float(long_span),
+            bbox_xywh=(x, y, ww, hh),
+            polarity="green",
+        )
+        if best is None or score > best[0]:
+            best = (score, detection)
+
+    return None if best is None else best[1]
 
 
 def _score_scale_bar_candidate(
@@ -1341,7 +1412,9 @@ def measure_annotated_tail(
     capsid_diameter_px, capsid_center_xy, capsid_radius_px = _compute_capsid_diameter_px(capsid_mask)
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    scale_bar = _find_bottom_scale_bar(gray)
+    scale_bar = _find_green_annotated_scale_bar(image_bgr)
+    if scale_bar is None:
+        scale_bar = _find_bottom_scale_bar(gray)
     tail_nm = tail_px * float(scale_nm) / scale_bar.length_px
     capsid_diameter_nm = capsid_diameter_px * float(scale_nm) / scale_bar.length_px
 
@@ -1386,7 +1459,7 @@ def render_annotated_tail_overlay(result: AnnotatedTailMeasurement) -> np.ndarra
         cv2.circle(img_bgr, (int(cx), int(cy)), int(result.capsid_radius_px), (255, 255, 0), thickness, cv2.LINE_AA)
 
     x, y, ww, hh = result.scale_bbox_xywh
-    cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+    cv2.rectangle(img_bgr, (x, y), (x + ww, y + hh), SCALE_BAR_OVERLAY_COLOR_BGR, thickness, cv2.LINE_AA)
     cv2.putText(img_bgr, f"Capsid: {result.capsid_diameter_nm:.2f} nm", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(img_bgr, f"Tail: {result.tail_nm:.2f} nm", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(
@@ -2291,7 +2364,7 @@ def render_clm_overlay(result: PhageCLMResult) -> np.ndarray:
 
     if result.scale_bbox_xywh is not None:
         x, y, ww, hh = result.scale_bbox_xywh
-        cv2.rectangle(image_bgr, (x, y), (x + ww, y + hh), (0, 255, 0), thickness, cv2.LINE_AA)
+        cv2.rectangle(image_bgr, (x, y), (x + ww, y + hh), SCALE_BAR_OVERLAY_COLOR_BGR, thickness, cv2.LINE_AA)
 
     text = [
         f"Capsid diameter: {result.capsid_diameter_nm:.2f} nm",
