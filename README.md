@@ -45,8 +45,8 @@ Commands:
 PhageScale has four subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
-- `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
-- `annotated-batch` for running the annotated workflow across a metadata workbook and exporting a new Excel sheet.
+- `annotated` for figures where the capsid is marked in magenta, the tail in yellow, and the scale bar in green.
+- `annotated-batch` for running the annotated workflow across a metadata Excel sheet and exporting a new Excel sheet.
 - `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
