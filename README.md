@@ -37,7 +37,7 @@ Options:
 
 Commands:
   measure          Measure from raw TEM images.
-  annotated        Measure from yellow/magenta-annotated figures.
+  annotated        Measure from annotated figures with magenta capsids,...
   annotated-batch  Measure all annotated images listed in an Excel sheet.
   clm              Measure with the fitted CLM phage model.
 ```
@@ -45,7 +45,7 @@ Commands:
 PhageScale has four subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
-- `annotated` for figures where the head and tail has already been marked in magenta and yellow, respectively.
+- `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
 - `annotated-batch` for running the annotated workflow across a metadata workbook and exporting a new Excel sheet.
 - `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
@@ -143,7 +143,7 @@ You can disply the help message using `python phagescale.py annotated --help`.
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
 
-  Measure from yellow/magenta-annotated figures.
+  Measure from annotated figures with optional green scale bars.
 
 Options:
   --image FILE        Path to input image (png/jpg/tif).  [required]
@@ -152,13 +152,15 @@ Options:
   --show_overlay      Display the tail overlay at the end of the run.
   -h, --help          Show this message and exit.
 ```
-**NOTE**: Make sure that the capsid in **magenta** and the tail has already been marked in **yellow**.
+**NOTE**: Make sure that the capsid is marked in **magenta** and the tail is marked in **yellow**. If the scale bar is explicitly marked, PhageScale will also detect a **green** scale-bar guide line before falling back to grayscale scale-bar detection.
 
 Example command:
 
 ```bash
 python phagescale.py annotated --image /path/to/image.png --scale_nm 100
 ```
+
+This uses the same annotated scale-bar detection as `annotated-batch`, so single-image runs also support the green-marked scale bars in your newer annotated dataset.
 
 You can also save or display an overlay:
 
