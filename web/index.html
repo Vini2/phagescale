@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhageScale Pyodide</title>
+    <link rel="stylesheet" href="./styles.css?v=saveimage1" />
+    <script defer src="https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js"></script>
+    <script defer src="./app.js?v=saveimage1"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="TEM image measurement workspace">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">PhageScale browser lab</p>
+            <h1>Bacteriophage TEM measurements</h1>
+          </div>
+          <label class="file-button">
+            <input id="imageInput" type="file" accept="image/*" />
+            <span>Upload TEM image</span>
+          </label>
+        </div>
+
+        <div class="canvas-frame">
+          <div id="canvasStage" class="canvas-stage" hidden>
+            <div id="canvasStack" class="canvas-stack">
+              <canvas id="imageCanvas"></canvas>
+              <canvas id="overlayCanvas"></canvas>
+            </div>
+          </div>
+          <div id="emptyState" class="empty-state">
+            <strong>Drop in a TEM image</strong>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel" aria-label="Measurement controls">
+        <div class="status-row">
+          <span id="pyodideDot" class="dot"></span>
+          <span id="pyodideStatus">Loading Pyodide...</span>
+        </div>
+
+        <section class="control-group">
+          <h2>Calibration</h2>
+          <button id="detectButton" class="primary" disabled>Detect scale bar</button>
+          <label class="field">
+            <span>Scale bar value</span>
+            <div class="unit-input">
+              <input id="scaleNm" type="number" min="0" step="0.01" value="100" />
+              <span>nm</span>
+            </div>
+          </label>
+          <div class="metric">
+            <span>Detected length</span>
+            <strong id="barPx">-</strong>
+          </div>
+          <div class="metric">
+            <span>Calibration</span>
+            <strong id="calibration">-</strong>
+          </div>
+          <p id="scaleMessage" class="message">Upload an image to begin.</p>
+        </section>
+
+        <section class="control-group">
+          <h2>Drawing</h2>
+          <div class="zoom-control">
+            <button id="zoomOutButton" type="button" disabled aria-label="Zoom out">-</button>
+            <input id="zoomSlider" type="range" min="25" max="500" value="100" step="5" disabled />
+            <button id="zoomInButton" type="button" disabled aria-label="Zoom in">+</button>
+            <strong id="zoomValue">100%</strong>
+          </div>
+          <button id="resetZoomButton" type="button" disabled>Reset zoom</button>
+          <div class="segmented" role="group" aria-label="Drawing mode">
+            <button id="straightMode" class="active" type="button">Straight</button>
+            <button id="wavyMode" type="button">Wavy</button>
+          </div>
+          <button id="undoButton" disabled>Undo last line</button>
+          <button id="clearButton" disabled>Clear lines</button>
+        </section>
+
+        <section class="control-group results">
+          <div class="results-head">
+            <h2>Measurements</h2>
+            <div class="export-actions">
+              <button id="saveImageButton" disabled>Save image</button>
+              <button id="exportButton" disabled>Export CSV</button>
+            </div>
+          </div>
+          <ol id="measurementList"></ol>
+        </section>
+      </aside>
+    </main>
+  </body>
+</html>
