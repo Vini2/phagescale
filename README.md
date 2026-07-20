@@ -2,7 +2,14 @@
 
 PhageScale measures phage dimensions, specifically, capsid diameter and tail length, from transmission electron microscopy (TEM) images obtained from [PhageBase](https://www.phagebase.com/).
 
-## Install
+## Web App
+
+We have provided a simple web app for you to upload your phage TEM image which will detect the scale bar. Then all you have to do is, draw the lines you want and the app will measure them based on the scale bar dimensions.
+
+**🌐 Web app**:
+[vini2.github.io/phagescale/](https://vini2.github.io/phagescale/)
+
+## Install the CLI locally
 
 First, clone this repository.
 
@@ -177,22 +184,22 @@ python phagescale.py annotated --image /path/to/image.png --scale_nm 100 --overl
 
 Input image:
 
-![Artemius annotated input](images/annotated/Artemius_siphophage_R.png)
+![Midgardsormr38 annotated input](images/annotated/Midgardsormr38.png)
 
 Measure it with:
 
 ```bash
-python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100
+python phagescale.py annotated --image images/annotated/Midgardsormr38.png --scale_nm 100
 ```
 
 Overlay output:
 
-![Artemius overlay output](images/annotated/Artemius_overlay.png)
+![Midgardsormr38 overlay output](images/annotated/Midgardsormr38_overlay.png)
 
 Save or display the overlay with:
 
 ```bash
-python phagescale.py annotated --image images/annotated/Artemius_siphophage_R.png --scale_nm 100 --overlay_out images/annotated/Artemius_overlay.png --show_overlay
+python phagescale.py annotated --image images/annotated/Midgardsormr38.png --scale_nm 200 --overlay_out images/annotated/Midgardsormr38_overlay.png --show_overlay
 ```
 
 
