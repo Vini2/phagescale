@@ -290,9 +290,13 @@ If you want the run to stop immediately on the first bad row instead of writing 
 
 ## More Examples
 
-Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure`, `annotated`, and `annotated-batch`.
+Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure` and `annotated`.
 
 
 ## Warning
 
 PhageScale is still under active development and heavy testing. Some results might be incorrect depending on the differences in contrast, background noise, staining effects, etc. Different methods may give different measurements depending on how the capsid and tail are detected from the images.
+
+## Acknowledgements
+
+Special thanks goes to [Renee Green](https://github.com/reneegreen816) for providing the annotated TEM images and [Aaryan Harshith](https://aaryanharshith.com/) for providing access to [PhageBase](https://www.phagebase.com/) images.
