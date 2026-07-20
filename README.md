@@ -300,3 +300,5 @@ PhageScale is still under active development and heavy testing. Some results mig
 ## Acknowledgements
 
 Special thanks goes to [Renee Green](https://github.com/reneegreen816) for providing the annotated TEM images and [Aaryan Harshith](https://aaryanharshith.com/) for providing access to [PhageBase](https://www.phagebase.com/) images.
+
+ChatGPT (OpenAI) was used as a development aid during front-end implementation for UI design iteration, component structuring, styling suggestions, and debugging support. All generated code and recommendations were reviewed, modified as needed, and validated by the project authors before integration.
