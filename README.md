@@ -46,7 +46,7 @@ PhageScale has four subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
 - `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
-- `annotated-batch` for running the annotated workflow across a metadata workbook and exporting a new Excel sheet.
+- `annotated-batch` for running the final colored-line batch workflow across a metadata workbook and exporting a new Excel sheet.
 - `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
@@ -70,6 +70,8 @@ The `annotated-batch` subcommand supports:
 - `--sheet_name` to worksheet name to read. Defaults to the first sheet
 - `--image_col` column containing the annotated image filename
 - `--scale_col` column containing the scale bar size in nm
+- `--usable_col` optional column used to decide which rows should be measured
+- `--usable_require_blank` to skip rows such as `N` while still allowing supported partial rows
 - `--overlay_dir` optional directory to save overlay images for successful measurements
 - `--fail_fast` to stop on the first error instead of recording failures in the output workbook
 
@@ -143,7 +145,8 @@ You can disply the help message using `python phagescale.py annotated --help`.
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
 
-  Measure from annotated figures with optional green scale bars.
+  Measure one annotated figure using the same colored-line workflow as
+  annotated-batch.
 
 Options:
   --image FILE        Path to input image (png/jpg/tif).  [required]
@@ -152,7 +155,11 @@ Options:
   --show_overlay      Display the tail overlay at the end of the run.
   -h, --help          Show this message and exit.
 ```
-**NOTE**: Make sure that the capsid is marked in **magenta** and the tail is marked in **yellow**. If the scale bar is explicitly marked, PhageScale will also detect a **green** scale-bar guide line before falling back to grayscale scale-bar detection.
+**NOTE**: `annotated` uses the same colored guide-line workflow as `annotated-batch`:
+- **green** = scale bar
+- **yellow** = tail length
+- **pink** = capsid width
+- **blue** = capsid length
 
 Example command:
 
@@ -160,12 +167,12 @@ Example command:
 python phagescale.py annotated --image /path/to/image.png --scale_nm 100
 ```
 
-This uses the same annotated scale-bar detection as `annotated-batch`, so single-image runs also support the green-marked scale bars in your newer annotated dataset.
+This keeps `annotated` as a one-image-at-a-time command while using the same measuring method as `annotated-batch`.
 
 You can also save or display an overlay:
 
 ```bash
-python phagescale.py annotated --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/annotated.png --show_overlay
+python phagescale.py annotated --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/annotated_overlay.png --show_overlay
 ```
 
 **Artemius example**
@@ -198,7 +205,7 @@ You can display the help message using `python phagescale.py annotated-batch --h
 ```bash
 Usage: phagescale.py annotated-batch [OPTIONS]
 
-  Measure all annotated figures listed in an Excel sheet.
+  Measure all batch-annotated figures in an Excel sheet.
 
 Options:
   --images_dir DIRECTORY   Directory containing annotated images.  [required]
@@ -209,6 +216,10 @@ Options:
                            [default: File name]
   --scale_col TEXT         Column containing the scale bar size in nm.
                            [default: Scale bar measurement (nm)]
+  --usable_col TEXT        Optional column used to decide which rows should
+                           be measured.
+  --usable_require_blank   Only measure rows where usable_col is blank; mark
+                           other rows as skipped.
   --overlay_dir DIRECTORY  Optional directory to save overlay images for
                            successful measurements.
   --fail_fast              Stop on the first error instead of recording
@@ -216,7 +227,12 @@ Options:
   -h, --help               Show this message and exit.
 ```
 
-Use this command when you have a workbook that lists annotated image filenames and their scale-bar sizes in nm.
+Use this command when you have a workbook of final colored annotations where:
+
+- green = scale bar
+- yellow = tail length
+- pink = capsid width
+- blue = capsid length
 
 ```bash
 python phagescale.py annotated-batch \
@@ -235,17 +251,20 @@ You can override those defaults with:
 - `--sheet_name` to choose a specific worksheet
 - `--image_col` to point at a different filename column
 - `--scale_col` to point at a different scale column
+- `--usable_col` and `--usable_require_blank` to skip rows such as `N` while still allowing special partial-measurement rows like `Only annotated capsid`
 
 The output workbook preserves the original columns and appends these measurement fields:
 
 - `Measurement status`
 - `Measurement error`
-- `Detected scale bar (px)`
-- `Detected scale bar polarity`
-- `Capsid diameter (px)`
-- `Capsid diameter (nm)`
+- `Scale bar length (px)`
+- `Scale bar length (nm)`
 - `Tail length (px)`
 - `Tail length (nm)`
+- `Capsid width (px)`
+- `Capsid width (nm)`
+- `Capsid length (px)`
+- `Capsid length (nm)`
 - `Image path`
 - `Metadata row`
 
