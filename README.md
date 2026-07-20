@@ -39,7 +39,6 @@ Commands:
   measure          Measure from raw TEM images.
   annotated        Measure from annotated figures with magenta capsids,...
   annotated-batch  Measure all annotated images listed in an Excel sheet.
-  clm              Measure with the fitted CLM phage model.
 ```
 
 PhageScale has four subcommands:
@@ -47,7 +46,6 @@ PhageScale has four subcommands:
 - `measure` for raw TEM images, using automatic head and tail detection.
 - `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
 - `annotated-batch` for running the final colored-line batch workflow across a metadata workbook and exporting a new Excel sheet.
-- `clm` for a CLM-style fit that estimates capsid diameter and tail length from raw TEM images.
 
 Global options:
 
