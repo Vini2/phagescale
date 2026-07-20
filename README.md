@@ -24,7 +24,7 @@ pip install click opencv-python numpy scikit-image matplotlib
 
 ## Run
 
-You can disply the help message using `python phagescale.py --help`.
+You can display the help message using `python phagescale.py --help`.
 
 ```bash
 Usage: phagescale.py [OPTIONS] COMMAND [ARGS]...
@@ -37,11 +37,11 @@ Options:
 
 Commands:
   measure          Measure from raw TEM images.
-  annotated        Measure from annotated figures with magenta capsids,...
-  annotated-batch  Measure all annotated images listed in an Excel sheet.
+  annotated        Measure one annotated figure using the same...
+  annotated-batch  Measure all batch-annotated images using the final...
 ```
 
-PhageScale has four subcommands:
+PhageScale has three subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
 - `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
@@ -52,7 +52,7 @@ Global options:
 - `-v` or `--version` shows the CLI version
 - `-h` or `--help` shows help
 
-The image-level subcommands (`measure`, `annotated`, and `clm`) support:
+The image-level subcommands (`measure` and `annotated`) support:
 
 - `--image` to input path of the image
 - `--scale_nm` to input scale-bar length in nm
@@ -77,7 +77,7 @@ The `annotated-batch` subcommand supports:
 
 ### 1. `measure` - Measuring from raw images
 
-You can disply the help message using `python phagescale.py measure --help`.
+You can display the help message using `python phagescale.py measure --help`.
 
 ```bash
 Usage: phagescale.py measure [OPTIONS]
@@ -138,7 +138,7 @@ python phagescale.py measure --image images/measure/MarsHill.jpeg --scale_nm 100
 
 ### 2. `annotated` - Measuring from annotated figures
 
-You can disply the help message using `python phagescale.py annotated --help`.
+You can display the help message using `python phagescale.py annotated --help`.
 
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
@@ -203,7 +203,7 @@ You can display the help message using `python phagescale.py annotated-batch --h
 ```bash
 Usage: phagescale.py annotated-batch [OPTIONS]
 
-  Measure all batch-annotated figures in an Excel sheet.
+  Measure all batch-annotated images using the final colored-line workflow.
 
 Options:
   --images_dir DIRECTORY   Directory containing annotated images.  [required]
@@ -279,64 +279,9 @@ python phagescale.py annotated-batch \
 If you want the run to stop immediately on the first bad row instead of writing per-row errors to the output workbook, add `--fail_fast`.
 
 
-### 4. `clm` - Fit constrained local model (CLM) fitted phage model from raw TEM images
-
-You can display the help message using `python phagescale.py clm --help`.
-
-```bash
-Usage: phagescale.py clm [OPTIONS]
-
-  Measure with the fitted CLM phage model.
-
-Options:
-  --image FILE             Path to input image (png/jpg/tif).  [required]
-  --scale_nm FLOAT         Scale bar value in nm.  [default: 100.0]
-  --bar_px_override FLOAT  Manual scale bar length in pixels.
-  --overlay_out FILE       Path to save the fitted overlay image.
-  --show_overlay           Display the fitted overlay at the end of the run.
-  --debug                  Enable verbose debug output.
-  -h, --help               Show this message and exit.
-```
-This command fits a small phage-specific point distribution model to the image and reports both capsid diameter and tail length. The model has been adapted from the [constrained local models fitted by regularized landmark mean-shift for face detection](https://github.com/auduno/clmtrackr).
-
-Example command:
-
-```bash
-python phagescale.py clm --image /path/to/image.png --scale_nm 100
-```
-
-Save or display the fitted overlay image with:
-
-```bash
-python phagescale.py clm --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/clm_overlay.png --show_overlay
-```
-
-**MarsHill example**
-
-Input image:
-
-![MarsHill input](images/measure/MarsHill.jpeg)
-
-Measure it with:
-
-```bash
-python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100
-```
-
-Overlay output:
-
-![MarsHill overlay output](images/clm/MarsHill_overlay.jpeg)
-
-Save or display the overlay with:
-
-```bash
-python phagescale.py measure --image images/clm/MarsHill.jpeg --scale_nm 100 --overlay_out images/clm/MarsHill_overlay.jpeg --show_overlay
-```
-
-
 ## More Examples
 
-Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure` and `annotated`.
+Check the [images](https://github.com/Vini2/phagescale/tree/main/images) folder for more examples showing the usage of `measure`, `annotated`, and `annotated-batch`.
 
 
 ## Warning
