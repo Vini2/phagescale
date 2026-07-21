@@ -38,22 +38,22 @@ You can display the help message using `python phagescale.py --help`.
 ```bash
 Usage: phagescale.py [OPTIONS] COMMAND [ARGS]...
 
-  Measure phage capsid diameter and tail length from TEM images.
+  Measure phage capsid dimensions and tail length from TEM images.
 
 Options:
   -v, --version  Show the version and exit.
   -h, --help     Show this message and exit.
 
 Commands:
-  measure          Measure from raw TEM images.
-  annotated        Measure one annotated figure using the same...
+  measure          Detect and measure phage capsid and tail from raw TEM...
+  annotated        Measure one annotated figure using the colored-line...
   annotated-batch  Measure all batch-annotated images using the final...
 ```
 
 PhageScale has three subcommands:
 
 - `measure` for raw TEM images, using automatic head and tail detection.
-- `annotated` for figures where the capsid is marked in magenta, the tail is marked in yellow, and the scale bar may be marked in green.
+- `annotated` for figures where the capsid, tail and the scale bar are marked.
 - `annotated-batch` for running the final colored-line batch workflow across a metadata workbook and exporting a new Excel sheet.
 
 Global options:
@@ -91,7 +91,7 @@ You can display the help message using `python phagescale.py measure --help`.
 ```bash
 Usage: phagescale.py measure [OPTIONS]
 
-  Measure from raw TEM images.
+  Detect and  measure phage capsid and tail from raw TEM images.
 
 Options:
   --image FILE               Path to input image (png/jpg/tif).  [required]
@@ -152,8 +152,9 @@ You can display the help message using `python phagescale.py annotated --help`.
 ```bash
 Usage: phagescale.py annotated [OPTIONS]
 
-  Measure one annotated figure using the same colored-line workflow as
-  annotated-batch.
+  Measure one annotated figure using the colored-line workflow: scale bar in
+  green, tail length in yellow, capsid width in pink and capsid length in
+  blue.
 
 Options:
   --image FILE        Path to input image (png/jpg/tif).  [required]
@@ -162,7 +163,7 @@ Options:
   --show_overlay      Display the tail overlay at the end of the run.
   -h, --help          Show this message and exit.
 ```
-**NOTE**: `annotated` uses the same colored guide-line workflow as `annotated-batch`:
+**NOTE**: `annotated` uses the following colored guide-line workflow:
 - **green** = scale bar
 - **yellow** = tail length
 - **pink** = capsid width
@@ -212,19 +213,21 @@ You can display the help message using `python phagescale.py annotated-batch --h
 ```bash
 Usage: phagescale.py annotated-batch [OPTIONS]
 
-  Measure all batch-annotated images using the final colored-line workflow.
+  Measure all batch-annotated images using the annotated colored-line
+  workflow.
 
 Options:
   --images_dir DIRECTORY   Directory containing annotated images.  [required]
   --metadata_xlsx FILE     Path to the metadata workbook (.xlsx).  [required]
   --output_xlsx FILE       Path to the output workbook (.xlsx).  [required]
-  --sheet_name TEXT        Worksheet name to read. Defaults to the first sheet.
+  --sheet_name TEXT        Worksheet name to read. Defaults to the first
+                           sheet.
   --image_col TEXT         Column containing the annotated image filename.
                            [default: File name]
   --scale_col TEXT         Column containing the scale bar size in nm.
                            [default: Scale bar measurement (nm)]
-  --usable_col TEXT        Optional column used to decide which rows should
-                           be measured.
+  --usable_col TEXT        Optional column used to decide which rows should be
+                           measured.
   --usable_require_blank   Only measure rows where usable_col is blank; mark
                            other rows as skipped.
   --overlay_dir DIRECTORY  Optional directory to save overlay images for
@@ -236,10 +239,10 @@ Options:
 
 Use this command when you have a workbook of final colored annotations where:
 
-- green = scale bar
-- yellow = tail length
-- pink = capsid width
-- blue = capsid length
+- **green** = scale bar
+- **yellow** = tail length
+- **pink** = capsid width
+- **blue** = capsid length
 
 ```bash
 python phagescale.py annotated-batch \
@@ -299,6 +302,6 @@ PhageScale is still under active development and heavy testing. Some results mig
 
 ## Acknowledgements
 
-Special thanks goes to [Renee Green](https://github.com/reneegreen816) for providing the annotated TEM images and [Aaryan Harshith](https://aaryanharshith.com/) for providing access to [PhageBase](https://www.phagebase.com/) images.
+Special thanks goes to [Renee Green](https://github.com/reneegreen816) for providing the annotated TEM images for the colored-line workflow and [Aaryan Harshith](https://aaryanharshith.com/) for providing access to [PhageBase](https://www.phagebase.com/) images.
 
 ChatGPT (OpenAI) was used as a development aid during front-end implementation for UI design iteration, component structuring, styling suggestions, and debugging support. All generated code and recommendations were reviewed, modified as needed, and validated by the project authors before integration.
