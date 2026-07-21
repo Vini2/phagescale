@@ -96,6 +96,14 @@ h2 {
   font-size: 15px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .file-button {
   display: inline-flex;
   align-items: center;
@@ -186,35 +194,62 @@ canvas {
   gap: 1px;
 }
 
-.status-row,
 .control-group {
   background: var(--surface);
   padding: 20px;
 }
 
-.status-row {
+.help-panel {
+  display: grid;
+  gap: 12px;
+  background: #111612;
+  border-top: 1px solid var(--line);
+  padding: 18px 20px 20px;
+}
+
+.help-panel[hidden] {
+  display: none;
+}
+
+.help-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.help-head button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
   color: var(--muted);
-  min-height: 72px;
+  font-size: 22px;
+  line-height: 1;
 }
 
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent-2);
-  box-shadow: 0 0 18px rgba(244, 196, 48, 0.55);
+.help-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.42;
 }
 
-.dot.ready {
-  background: var(--accent);
-  box-shadow: 0 0 18px rgba(0, 194, 168, 0.55);
+.help-steps li {
+  display: list-item;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
-.dot.error {
-  background: var(--danger);
+.help-steps li::before {
+  content: none;
+}
+
+.help-steps strong {
+  color: var(--ink);
 }
 
 .control-group {
@@ -354,7 +389,7 @@ canvas {
   white-space: nowrap;
 }
 
-ol {
+#measurementList {
   align-content: start;
   display: grid;
   gap: 10px;
@@ -363,7 +398,7 @@ ol {
   list-style: none;
 }
 
-li {
+#measurementList li {
   --line-color: var(--accent);
   align-self: start;
   position: relative;
@@ -376,7 +411,7 @@ li {
   background: #111612;
 }
 
-li::before {
+#measurementList li::before {
   content: "";
   position: absolute;
   inset: 12px auto 12px 8px;
@@ -385,11 +420,11 @@ li::before {
   background: var(--line-color);
 }
 
-li strong {
+#measurementList li strong {
   color: var(--line-color);
 }
 
-li small {
+#measurementList li small {
   grid-column: 1 / -1;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -407,5 +442,9 @@ li small {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
   }
 }

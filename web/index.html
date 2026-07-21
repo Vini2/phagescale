@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PhageScale Pyodide</title>
-    <link rel="stylesheet" href="./styles.css?v=saveimage1" />
+    <link rel="stylesheet" href="./styles.css?v=help2" />
     <script defer src="https://cdn.jsdelivr.net/pyodide/v0.28.0/full/pyodide.js"></script>
-    <script defer src="./app.js?v=saveimage1"></script>
+    <script defer src="./app.js?v=help2"></script>
   </head>
   <body>
     <main class="app-shell">
@@ -16,10 +16,13 @@
             <p class="eyebrow">PhageScale browser lab</p>
             <h1>Bacteriophage TEM measurements</h1>
           </div>
-          <label class="file-button">
-            <input id="imageInput" type="file" accept="image/*" />
-            <span>Upload TEM image</span>
-          </label>
+          <div class="topbar-actions">
+            <button id="exampleButton" type="button">Load example TEM image</button>
+            <label class="file-button">
+              <input id="imageInput" type="file" accept="image/*" />
+              <span>Upload TEM image</span>
+            </label>
+          </div>
         </div>
 
         <div class="canvas-frame">
@@ -36,10 +39,20 @@
       </section>
 
       <aside class="panel" aria-label="Measurement controls">
-        <div class="status-row">
-          <span id="pyodideDot" class="dot"></span>
-          <span id="pyodideStatus">Loading Pyodide...</span>
-        </div>
+        <section id="helpPanel" class="help-panel" aria-label="Measurement workflow">
+          <div class="help-head">
+            <h2>How to measure</h2>
+            <button id="dismissHelpButton" type="button" aria-label="Dismiss help">×</button>
+          </div>
+          <ol class="help-steps">
+            <li>Load a TEM image or use the MarsHill example.</li>
+            <li>Click <strong>Detect scale bar</strong> and confirm the red dashed box marks the scale bar.</li>
+            <li>Enter the scale-bar size in nm.</li>
+            <li>Choose <strong>Straight</strong> or <strong>Wavy</strong>, then draw on the image.</li>
+            <li>Review lengths in the Measurements panel.</li>
+            <li>Export the CSV or save the annotated image.</li>
+          </ol>
+        </section>
 
         <section class="control-group">
           <h2>Calibration</h2>

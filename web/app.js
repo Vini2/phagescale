@@ -13,14 +13,15 @@ const state = {
 };
 
 const els = {
+  exampleButton: document.querySelector("#exampleButton"),
+  dismissHelpButton: document.querySelector("#dismissHelpButton"),
+  helpPanel: document.querySelector("#helpPanel"),
   imageInput: document.querySelector("#imageInput"),
   canvasStage: document.querySelector("#canvasStage"),
   canvasStack: document.querySelector("#canvasStack"),
   imageCanvas: document.querySelector("#imageCanvas"),
   overlayCanvas: document.querySelector("#overlayCanvas"),
   emptyState: document.querySelector("#emptyState"),
-  pyodideDot: document.querySelector("#pyodideDot"),
-  pyodideStatus: document.querySelector("#pyodideStatus"),
   detectButton: document.querySelector("#detectButton"),
   scaleNm: document.querySelector("#scaleNm"),
   barPx: document.querySelector("#barPx"),
@@ -43,6 +44,7 @@ const els = {
 const imageCtx = els.imageCanvas.getContext("2d", { willReadFrequently: true });
 const overlayCtx = els.overlayCanvas.getContext("2d");
 const LINE_COLORS = ["#ff8a00", "#00d5ff", "#ff3fb4", "#9cff00", "#8f5cff", "#ff3b30", "#2f7bff", "#ffd400"];
+const EXAMPLE_IMAGE_URL = "./examples/MarsHill.jpeg";
 
 function pyResultToObject(result) {
   if (result && typeof result.toJs === "function") {
@@ -59,13 +61,10 @@ async function initPyodide() {
     await state.pyodide.loadPackage("numpy");
     const response = await fetch(`./phagescale_pyodide.py?v=${Date.now()}`, { cache: "no-store" });
     state.pyodide.runPython(await response.text());
-    els.pyodideDot.classList.add("ready");
-    els.pyodideStatus.textContent = "Pyodide ready";
     refreshButtons();
   } catch (error) {
-    els.pyodideDot.classList.add("error");
-    els.pyodideStatus.textContent = "Pyodide failed to load";
     els.scaleMessage.textContent = error.message;
+    els.scaleMessage.classList.add("warning");
   }
 }
 
@@ -229,6 +228,24 @@ async function loadImage(file) {
   refreshButtons();
 }
 
+async function loadExampleImage() {
+  els.exampleButton.disabled = true;
+  els.scaleMessage.textContent = "Loading example TEM image...";
+  els.scaleMessage.classList.remove("warning");
+  try {
+    const response = await fetch(EXAMPLE_IMAGE_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Example image could not be loaded (${response.status}).`);
+    const blob = await response.blob();
+    const file = new File([blob], "MarsHill.jpeg", { type: blob.type || "image/jpeg" });
+    await loadImage(file);
+  } catch (error) {
+    els.scaleMessage.textContent = error.message;
+    els.scaleMessage.classList.add("warning");
+  } finally {
+    els.exampleButton.disabled = false;
+  }
+}
+
 async function detectScaleBar() {
   if (!state.pyodide || !state.imageLoaded) return;
   els.detectButton.disabled = true;
@@ -357,6 +374,10 @@ els.imageInput.addEventListener("change", (event) => {
   if (file) loadImage(file);
 });
 
+els.exampleButton.addEventListener("click", loadExampleImage);
+els.dismissHelpButton.addEventListener("click", () => {
+  els.helpPanel.hidden = true;
+});
 els.detectButton.addEventListener("click", detectScaleBar);
 els.scaleNm.addEventListener("input", () => {
   updateCalibration();
