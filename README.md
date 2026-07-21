@@ -9,7 +9,7 @@ We have provided a simple web app for you to upload your phage TEM image which w
 **🌐 Web app**:
 [vini2.github.io/phagescale/](https://vini2.github.io/phagescale/)
 
-![Web app](images/phagescale_web.png)
+![Web app](images/phagescale_web_app.png)
 
 ## Install the CLI locally
 
