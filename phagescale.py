@@ -5888,7 +5888,7 @@ def render_clm_overlay(result: PhageCLMResult) -> np.ndarray:
 @click.group(cls=OrderedGroup, context_settings=CLICK_CONTEXT_SETTINGS)
 @click.version_option(VERSION, "-v", "--version", prog_name="phagescale.py")
 def cli() -> None:
-    """Measure phage capsid diameter and tail length from TEM images."""
+    """Measure phage capsid dimensions and tail length from TEM images."""
 
 
 @cli.command("measure", context_settings=CLICK_CONTEXT_SETTINGS)
@@ -5906,7 +5906,7 @@ def measure_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure from raw TEM images."""
+    """Detect and  measure phage capsid and tail from raw TEM images."""
     _ensure_overlay_output_is_not_input(image, overlay_out)
     try:
         result = measure_phage_tail(
@@ -5955,7 +5955,7 @@ def annotated_command(
     overlay_out: Optional[Path],
     show_overlay: bool,
 ) -> None:
-    """Measure one annotated figure using the same colored-line workflow as annotated-batch."""
+    """Measure one annotated figure using the colored-line workflow: scale bar in green, tail length in yellow, capsid width in pink and capsid length in blue."""
     _ensure_overlay_output_is_not_input(image, overlay_out)
     try:
         result = measure_tape_annotated_phage(image_path=image, scale_nm=scale_nm)
@@ -6001,7 +6001,7 @@ def annotated_batch_command(
     overlay_dir: Optional[Path],
     fail_fast: bool,
 ) -> None:
-    """Measure all batch-annotated images using the final colored-line workflow."""
+    """Measure all batch-annotated images using the annotated colored-line workflow."""
     try:
         success_count, failure_count, skipped_count = measure_annotated_batch(
             images_dir=images_dir,
