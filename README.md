@@ -192,7 +192,7 @@ Input image:
 Measure it with:
 
 ```bash
-python phagescale.py annotated --image images/annotated/Midgardsormr38.png --scale_nm 100
+python phagescale.py annotated --image images/annotated/Midgardsormr38.png --scale_nm 200
 ```
 
 Overlay output:
