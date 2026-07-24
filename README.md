@@ -183,7 +183,7 @@ You can also save or display an overlay:
 python phagescale.py annotated --image /path/to/image.png --scale_nm 100 --overlay_out /path/to/annotated_overlay.png --show_overlay
 ```
 
-**Artemius example**
+**Midgardsormr38 example**
 
 Input image:
 
